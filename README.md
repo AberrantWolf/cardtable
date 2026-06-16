@@ -80,7 +80,9 @@ view, screenshots) persists locally in IndexedDB.
 ## 🔒 Privacy
 
 The install prompt asks for access to all sites — required to screenshot pages and track
-tabs. **All of it runs locally; nothing is sent anywhere.**
+tabs. **All of it runs locally; nothing is sent anywhere** — no servers, no analytics, no
+data collection of any kind. See the full [Privacy Policy](PRIVACY.md) for exactly what's
+stored locally on your device.
 
 ## 🗺️ Status & roadmap
 
@@ -91,3 +93,7 @@ multi-select · arrow-key navigation & fuller a11y · sync across devices · scr
 included in export.
 
 Suggestions welcome. 🙌
+
+## 📄 License
+
+[MIT](LICENSE) © Scott Harper
