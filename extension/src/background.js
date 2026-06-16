@@ -47,18 +47,24 @@ const isCanvas = (url) => !!url && url.startsWith(X.runtime.getURL(""));
 const broadcastChanged = () => { try { X.runtime.sendMessage({ type: CT.MSG.CHANGED }).catch(() => {}); } catch (e) {} };
 const broadcastShot = (cardId) => { try { X.runtime.sendMessage({ type: CT.MSG.SHOT, cardId }).catch(() => {}); } catch (e) {} };
 
+const creating = new Map();   // tabId -> in-flight create promise; collapses concurrent creates into one card
 async function ensureCardForTab(tab) {
   if (!tab || !CT.isTrackable(tab.url) || isCanvas(tab.url)) return null;
-  let card = await cardByTab(tab.id);
-  if (card) return card;
-  card = {
-    cardId: CT.uuid(), tabId: tab.id, url: tab.url, title: tab.title || tab.url,
-    favicon: tab.favIconUrl || "", state: tab.discarded ? "sleeping" : "live",
-    windowId: tab.windowId, createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0,
-  };
-  await idbPut(CT.STORES.tabs, card);
-  broadcastChanged();
-  return card;
+  const existing = await cardByTab(tab.id);
+  if (existing) return existing;
+  if (creating.has(tab.id)) return creating.get(tab.id);
+  const p = (async () => {
+    const card = {
+      cardId: CT.uuid(), tabId: tab.id, url: tab.url, title: tab.title || tab.url,
+      favicon: tab.favIconUrl || "", state: tab.discarded ? "sleeping" : "live",
+      windowId: tab.windowId, createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0,
+    };
+    await idbPut(CT.STORES.tabs, card);
+    broadcastChanged();
+    return card;
+  })();
+  creating.set(tab.id, p);
+  try { return await p; } finally { creating.delete(tab.id); }
 }
 
 // ---------------- screenshots ----------------

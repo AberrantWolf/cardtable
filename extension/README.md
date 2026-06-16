@@ -5,8 +5,7 @@ new-tab page. Tabs you don't have open in front of you **sleep** (discarded) to 
 cheap, but keep their scroll/form/session state. Double-click a card to jump to that
 tab; the **SSO deep-link guard** sends you back to the exact page after a re-login.
 
-This is the real extension built from the `../web` prototype. It targets **Chromium
-(MV3)** and **Firefox (MV3)** from one source tree.
+It targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 
 ## Build & load
 
@@ -82,7 +81,7 @@ Syntax-validated and assembled, but **not yet exercised in a live browser** here
 to shake out runtime issues on first load (check the service-worker console in
 `chrome://extensions` and the page console on the new tab). Known sharp edges:
 
-- The "sticky outline on remove" glitch from the prototype may still surface.
+- The "sticky outline on remove" glitch may still surface.
 - Live new-group preview only shows for single-card drags, not multi-select drags.
 - Aggressive sleeping (default keep-1) means lots of tabs in Chromium's strip; pair with
   Firefox + hidden strip for the intended feel.

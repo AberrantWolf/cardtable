@@ -133,7 +133,7 @@ function buildCard(c, inHand) {
     if (filter && !matches(c)) el.classList.add("dim");
   }
   const shot = c.shotUrl ? `<img class="snap" src="${c.shotUrl}" draggable="false" alt="">` : `<div class="ph">${placeholderLetter(c)}</div>`;
-  const fav = c.favicon ? `<img class="fav" src="${c.favicon}" draggable="false" alt="" onerror="this.style.display='none'">` : "";
+  const fav = c.favicon ? `<img class="fav" src="${escapeHtml(c.favicon)}" draggable="false" alt="" onerror="this.style.display='none'">` : "";
   el.innerHTML =
     `<div class="shot">${shot}</div>` +
     (inHand ? "" : `<div class="status ${c.state || "cold"}" title="${c.state}"></div>`) +
