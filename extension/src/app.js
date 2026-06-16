@@ -124,27 +124,36 @@ function worldToScreen(wx, wy) { return { x: wx * state.view.zoom + state.view.x
 
 // ---------------- card rendering ----------------
 function placeholderLetter(c) { try { return (new URL(c.url).hostname.replace(/^www\./, "")[0] || "•").toUpperCase(); } catch { return (c.title || "•")[0].toUpperCase(); } }
+// Small DOM helpers — cards are built without innerHTML so untrusted page text
+// (titles, favicons) can never be interpreted as markup on this privileged page.
+function elem(tag, className, props) { const e = document.createElement(tag); if (className) e.className = className; if (props) Object.assign(e, props); return e; }
+function snapImg(url) { return elem("img", "snap", { src: url, alt: "", draggable: false }); }
 function buildCard(c, inHand) {
-  const el = document.createElement("div");
-  el.className = "card"; el.dataset.id = c.cardId;
+  const el = elem("div", "card"); el.dataset.id = c.cardId;
   if (!inHand) {
     el.style.left = c.x + "px"; el.style.top = c.y + "px"; el.style.transform = `rotate(${c.rot}deg)`; el.style.zIndex = c.z || 1;
     if (selection.has(c.cardId)) el.classList.add("selected");
     if (filter && !matches(c)) el.classList.add("dim");
   }
-  const shot = c.shotUrl ? `<img class="snap" src="${c.shotUrl}" draggable="false" alt="">` : `<div class="ph">${placeholderLetter(c)}</div>`;
-  const fav = c.favicon ? `<img class="fav" src="${escapeHtml(c.favicon)}" draggable="false" alt="">` : "";
-  el.innerHTML =
-    `<div class="shot">${shot}</div>` +
-    (inHand ? "" : `<div class="status ${c.state || "cold"}" title="${c.state}"></div>`) +
-    `<div class="label">${fav}<span class="title">${escapeHtml(c.title)}</span></div>` +
-    (inHand ? "" : `<div class="note" contenteditable="true" spellcheck="false">${escapeHtml(c.note)}</div><div class="close" title="close for good">✕</div>`);
+  const shot = elem("div", "shot");
+  shot.append(c.shotUrl ? snapImg(c.shotUrl) : elem("div", "ph", { textContent: placeholderLetter(c) }));
+  el.append(shot);
+  if (!inHand) el.append(elem("div", "status " + (c.state || "cold"), { title: c.state || "cold" }));
+  const label = elem("div", "label");
+  if (c.favicon) {
+    const fav = elem("img", "fav", { src: c.favicon, alt: "", draggable: false });
+    fav.addEventListener("error", () => { fav.style.display = "none"; });   // inline onerror is blocked by the MV3 page CSP
+    label.append(fav);
+  }
+  label.append(elem("span", "title", { textContent: c.title || "" }));
+  el.append(label);
+  if (!inHand) {
+    el.append(elem("div", "note", { contentEditable: "true", spellcheck: false, textContent: c.note || "" }));
+    el.append(elem("div", "close", { title: "close for good", textContent: "✕" }));
+  }
   el.addEventListener("dragstart", (e) => e.preventDefault());   // never let the browser native-drag the screenshot
-  const favEl = el.querySelector(".fav");
-  if (favEl) favEl.addEventListener("error", () => { favEl.style.display = "none"; });   // inline onerror is blocked by the MV3 page CSP
   return el;
 }
-function escapeHtml(s) { return (s || "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m])); }
 function plainPaste(e) { e.preventDefault(); const t = (e.clipboardData || window.clipboardData).getData("text/plain") || ""; document.execCommand("insertText", false, t); }
 
 function renderCards() {
@@ -655,7 +664,7 @@ function scheduleReload() { if (busy) { pendingReload = true; return; } clearTim
 X.runtime.onMessage.addListener((msg) => {
   if (!msg) return;
   if (msg.type === CT.MSG.CHANGED) scheduleReload();
-  else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || busy) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.innerHTML = `<img class="snap" src="${u}" alt="">`; }); }   // document-wide: also updates cards in the hand
+  else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || busy) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.replaceChildren(snapImg(u)); }); }   // document-wide: also updates cards in the hand
 });
 
 // ---------------- boot ----------------
