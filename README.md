@@ -29,7 +29,7 @@ It replaces your new-tab page, so the canvas *is* home.
 The extension targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 
 ```sh
-cd extension && ./build.sh   # assembles dist/chromium and dist/firefox — no dependencies
+cd extension && ./build.sh   # assembles dist/chromium and dist/firefox (needs Node.js)
 ```
 
 - **Chromium** — `chrome://extensions` → enable *Developer mode* → *Load unpacked* → `dist/chromium`

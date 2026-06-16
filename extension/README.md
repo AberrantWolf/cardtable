@@ -10,7 +10,7 @@ It targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 ## Build & load
 
 ```sh
-./build.sh        # assembles dist/chromium and dist/firefox (no dependencies)
+./build.sh        # assembles dist/chromium and dist/firefox (needs Node.js)
 ```
 
 - **Chromium**: `chrome://extensions` → enable *Developer mode* → *Load unpacked* → `dist/chromium`

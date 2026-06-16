@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 cardtable shows your browser tabs as Polaroid-style cards on a pannable/zoomable 2D
 canvas that replaces the new-tab page. Cards can be grouped (drawn as hand-drawn chalk
-blobs), annotated, and let sleep. There is **no build tooling, no package.json, no npm,
-no test suite, and no linter** — everything is vanilla JS run directly by the browser.
+blobs), annotated, and let sleep. There is **no package.json, no npm, no test suite, and
+no linter** — it's vanilla JS run directly by the browser; the only build step is a small
+Node script that merges the per-browser manifest.
 
 ## Layout
 
@@ -21,11 +22,12 @@ source; `extension/build.sh` assembles loadable copies into `extension/dist/`
 ## Build & run the extension
 
 ```sh
-cd extension && ./build.sh   # copies src/ + the per-browser manifest into dist/{chromium,firefox}
+cd extension && ./build.sh   # merges the manifest + copies src/ into dist/{chromium,firefox}
 ```
 
-`build.sh` has no dependencies — it literally `cp`s `src/` and overlays the right
-`manifest.<target>.json` as `manifest.json`. `extension/dist/` is gitignored.
+`build.sh` copies `src/` into each target, then generates `manifest.json` by merging
+`manifest.base.json` with the per-target overlay via `build-manifest.mjs` (needs Node).
+`extension/dist/` is gitignored.
 
 - **Chromium**: `chrome://extensions` → Developer mode → Load unpacked → `dist/chromium`
 - **Firefox**: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `dist/firefox/manifest.json`
@@ -96,10 +98,13 @@ around every lone card.
 
 ## Cross-cutting rules
 
-- **Two manifests, kept in sync.** Any permission, command, or content-script change must
-  be made in **both** `manifest.chromium.json` and `manifest.firefox.json` (they differ
-  only in the background declaration and Firefox's `gecko` block). The Chromium service
-  worker pulls in `shared.js` via `importScripts`; Firefox lists it before `background.js`
-  in the manifest — so `shared.js` must remain a side-effect-free classic script.
+- **One base manifest, two overlays.** Shared manifest fields **and `version`** live once
+  in `manifest.base.json`; `build-manifest.mjs` merges it with a per-target overlay at
+  build time. Only browser-specific keys go in the overlays — `manifest.chromium.json`
+  (service-worker background) and `manifest.firefox.json` (scripts background + `gecko`
+  block). So permission/command/content-script changes are made **once**, in the base. The
+  Chromium service worker pulls in `shared.js` via `importScripts`; Firefox lists it before
+  `background.js` in its background `scripts` — so `shared.js` must remain a side-effect-free
+  classic script.
 - **Settings** live in `X.storage.local` under `settings`, merged over `CT.DEFAULTS`.
   Both `app.js` and `background.js` keep a live copy synced via `storage.onChanged`.

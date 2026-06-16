@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# Assemble loadable, unpacked extensions for each browser. No dependencies.
+# Assemble loadable, unpacked extensions for each browser.
+# Shared manifest fields + version live once in manifest.base.json; per-browser
+# differences live in manifest.<target>.json and are merged in by build-manifest.mjs.
+# Requires Node.js (only for the manifest merge).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 src="$here/src"
+
+command -v node >/dev/null 2>&1 || { echo "error: Node.js is required (it merges the manifest)"; exit 1; }
 
 for t in chromium firefox; do
   out="$here/dist/$t"
   rm -rf "$out"
   mkdir -p "$out"
   cp -r "$src/." "$out/"
-  cp "$here/manifest.$t.json" "$out/manifest.json"
+  node "$here/build-manifest.mjs" "$t" "$out/manifest.json"
   echo "built  $out"
 done
 
