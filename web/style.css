@@ -1,0 +1,86 @@
+/* All tunables live here — this is the "user can modify" surface. */
+:root {
+  --table-bg: #262a32;
+  --table-bg-2: #181b21;
+  --chalk: #eef2ef;
+  --card-paper: #fafaf4;
+  --card-w: 230px;        /* Polaroid width */
+  --shot-ratio: 4 / 3;    /* screenshot aspect */
+  --label-h: 44px;        /* the wide white strip along the bottom */
+  --card-pad: 11px;       /* white frame around the photo */
+  --label-font: "Caveat", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  --title-font: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --lift: 0 6px 16px rgba(0, 0, 0, .35), 0 2px 4px rgba(0, 0, 0, .25);
+  --lift-hi: 0 14px 30px rgba(0, 0, 0, .45), 0 4px 8px rgba(0, 0, 0, .3);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title-font); color: #fff; }
+
+#table {
+  position: fixed; inset: 0; cursor: grab; touch-action: none; user-select: none;
+  background: radial-gradient(135% 135% at 50% -10%, var(--table-bg) 0%, var(--table-bg-2) 100%);
+}
+#table.panning { cursor: grabbing; }
+#table::before {                       /* faint felt grain */
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#group-paths path { fill: none; stroke: var(--chalk); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+#cards { position: absolute; left: 0; top: 0; }
+#labels { position: fixed; inset: 0; pointer-events: none; z-index: 600; }   /* screen space → labels stay a constant size at any zoom */
+
+.group-wrap, .group-label { transition: opacity .16s ease; }
+.group-wrap path { transition: d .12s ease; }
+#group-paths .preview path { stroke-dasharray: 9 7; opacity: .42; }   /* "this group will form on drop" */
+.group-label {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; align-items: center; gap: 2px;
+  font-family: var(--label-font); font-size: 27px; color: var(--chalk); opacity: .85;
+  white-space: nowrap; pointer-events: auto; padding: 2px 6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+}
+.group-label .grip { cursor: grab; font-size: 22px; line-height: 1; opacity: .55; padding: 6px 10px; margin: -6px 2px -6px -6px; border-radius: 8px; }
+.group-label .grip:hover { opacity: 1; background: rgba(238, 242, 239, .14); }
+.group-label .gname { cursor: text; outline: none; }
+
+/* ---- Polaroid card ---- */
+.card {
+  position: absolute; width: var(--card-w); background: var(--card-paper);
+  padding: var(--card-pad) var(--card-pad) 0; border-radius: 3px; box-shadow: var(--lift);
+  cursor: grab; transition: box-shadow .12s ease;
+}
+.card:hover { box-shadow: var(--lift-hi); z-index: 5; }
+.card.dragging { cursor: grabbing; box-shadow: var(--lift-hi); z-index: 1000; }
+.card .shot { position: relative; width: 100%; aspect-ratio: var(--shot-ratio); overflow: hidden; border-radius: 1px; background: #cfcfc7; }
+.card .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card .shot .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 60px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .25)); }
+.card .shot .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(160deg, rgba(255, 255, 255, .22), rgba(0, 0, 0, .18)); }
+.card .label { height: var(--label-h); display: flex; align-items: center; gap: 8px; padding: 0 3px; font-family: var(--label-font); font-size: 18px; color: #2a2a26; }
+.card .label .fav { flex: 0 0 auto; font-size: 17px; line-height: 1; }
+.card .label .title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .note { font-family: var(--title-font); font-size: 11.5px; line-height: 1.35; color: #6b6b61; padding: 0 3px 9px; white-space: pre-wrap; outline: none; }
+.card .note:empty::before { content: "✎ note"; color: #c2c2b6; }
+.card .close {
+  position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; border-radius: 50%;
+  background: #d8423b; color: #fff; border: 2px solid var(--card-paper); cursor: pointer;
+  display: none; align-items: center; justify-content: center; font-size: 13px; line-height: 1;
+}
+.card:hover .close { display: flex; }
+
+/* ---- the hand (MTG-style fan along the bottom) ---- */
+#hand { position: fixed; left: 50%; bottom: -22px; transform: translateX(-50%); height: 230px; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; z-index: 800; }
+#hand .card { position: relative; width: 158px; margin: 0 -38px; transform-origin: bottom center; transition: transform .14s ease, margin .14s ease; pointer-events: auto; filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .45)); }
+#hand .card:hover { margin: 0 8px; z-index: 50; }
+#hand .card .close { display: none !important; }
+#hand.receiving::before { content: ""; position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); width: 320px; height: 150px; border-radius: 20px; background: radial-gradient(closest-side, rgba(238, 242, 239, .16), transparent); border: 2px dashed rgba(238, 242, 239, .4); }
+
+/* ---- discard zone + toolbar ---- */
+#trash { position: fixed; left: 22px; bottom: 22px; width: 66px; height: 66px; z-index: 850; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: rgba(0, 0, 0, .28); border: 2px dashed rgba(238, 242, 239, .35); opacity: .45; transition: all .14s ease; }
+#trash.hot { opacity: 1; transform: scale(1.12); background: rgba(216, 66, 59, .35); border-color: #d8423b; }
+#bar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; gap: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(0, 0, 0, .35); backdrop-filter: blur(6px); }
+#bar button { font: inherit; font-size: 13px; color: var(--chalk); background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .14); padding: 6px 11px; border-radius: 8px; cursor: pointer; }
+#bar button:hover { background: rgba(255, 255, 255, .16); }
+#hint { position: fixed; right: 16px; bottom: 16px; z-index: 850; font-size: 12px; color: rgba(238, 242, 239, .5); text-align: right; line-height: 1.6; pointer-events: none; }

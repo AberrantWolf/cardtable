@@ -1,0 +1,138 @@
+:root {
+  --table-bg: #262a32;
+  --table-bg-2: #181b21;
+  --chalk: #eef2ef;
+  --card-paper: #fafaf4;
+  --card-w: 230px;
+  --shot-ratio: 4 / 3;
+  --label-h: 44px;
+  --title-lines: 1;
+  --label-size: 18px;
+  --card-pad: 11px;
+  --label-font: "Caveat", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  --title-font: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --lift: 0 6px 16px rgba(0, 0, 0, .35), 0 2px 4px rgba(0, 0, 0, .25);
+  --lift-hi: 0 14px 30px rgba(0, 0, 0, .45), 0 4px 8px rgba(0, 0, 0, .3);
+  --accent: #5b9dd9;
+}
+.theme-paper {
+  --table-bg: #e9e6dc; --table-bg-2: #d8d4c6; --chalk: #4a4a44;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title-font); color: #fff; }
+.reduce * { transition: none !important; animation: none !important; }
+
+#table {
+  position: fixed; inset: 0; cursor: grab; touch-action: none; user-select: none;
+  background: radial-gradient(135% 135% at 50% -10%, var(--table-bg) 0%, var(--table-bg-2) 100%);
+}
+#table.panning { cursor: grabbing; }
+#table::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#group-paths path { fill: none; stroke: var(--chalk); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+.group-wrap, .group-label { transition: opacity .16s ease; }
+.group-wrap path { transition: d .12s ease, stroke-width .12s ease, opacity .12s ease; }
+#group-paths .group-wrap.near path { stroke-width: 4.8; opacity: .95; }   /* bold when a press would grab the group */
+#group-paths .preview path { stroke-dasharray: 9 7; opacity: .42; }
+#cards { position: absolute; left: 0; top: 0; }
+#labels { position: fixed; inset: 0; pointer-events: none; z-index: 600; }
+.group-label {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; align-items: center; gap: 2px;
+  font-family: var(--label-font); font-size: 27px; color: var(--chalk); opacity: .85;
+  white-space: nowrap; pointer-events: auto; padding: 2px 6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+}
+.group-label { max-width: 340px; }
+.group-label .gname { cursor: text; outline: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.group-label .gname:focus { overflow: visible; text-overflow: clip; }
+.group-label .gname:empty::before { content: "+ name"; opacity: .45; }
+
+/* ---- Polaroid card ---- */
+.card {
+  position: absolute; width: var(--card-w); background: var(--card-paper);
+  padding: var(--card-pad) var(--card-pad) 0; border-radius: 3px; box-shadow: var(--lift);
+  cursor: grab; transition: box-shadow .12s ease;
+}
+.card:hover { box-shadow: var(--lift-hi); z-index: 5; }
+.card.dragging { cursor: grabbing; box-shadow: var(--lift-hi); z-index: 1000; }
+.card.selected { outline: 3px solid var(--accent); outline-offset: 2px; }
+.card.dim { opacity: .28; filter: saturate(.6); }
+.card img { -webkit-user-drag: none; user-select: none; pointer-events: none; }   /* the gesture is the card drag, not a native image drag */
+.card .shot { position: relative; width: 100%; aspect-ratio: var(--shot-ratio); overflow: hidden; border-radius: 1px; background: #2b2f37; }
+.card .shot img.snap { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
+.card .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 54px; font-weight: 700; color: rgba(255, 255, 255, .9); text-transform: uppercase; }
+.card .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(160deg, rgba(255, 255, 255, .14), rgba(0, 0, 0, .22)); }
+.card .label { min-height: var(--label-h); display: flex; align-items: center; gap: 8px; padding: 2px 3px 5px; font-family: var(--label-font); font-size: var(--label-size); color: #2a2a26; }
+.card .label img.fav { width: 16px; height: 16px; flex: 0 0 auto; border-radius: 3px; align-self: flex-start; margin-top: 2px; }
+.card .label .title { flex: 1 1 auto; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--title-lines); line-clamp: var(--title-lines); overflow-wrap: anywhere; line-height: 1.15; }
+.card .note { font-family: var(--title-font); font-size: 11.5px; line-height: 1.35; color: #6b6b61; padding: 0 3px 9px; white-space: pre-wrap; outline: none; min-height: 6px; }
+.card .note:empty::before { content: "✎ note"; color: #c2c2b6; }
+.card .status { position: absolute; top: 16px; left: 16px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .25); }
+.card .status.live { background: #57c777; }
+.card .status.sleeping { background: #c9c9c0; }
+.card .status.cold { background: transparent; border: 2px solid #b9b9ae; width: 8px; height: 8px; }
+.card .close {
+  position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; border-radius: 50%;
+  background: #d8423b; color: #fff; border: 2px solid var(--card-paper); cursor: pointer;
+  display: none; align-items: center; justify-content: center; font-size: 13px; line-height: 1; z-index: 2;
+}
+.card:hover .close { display: flex; }
+
+/* ---- hand ---- */
+#hand { position: fixed; left: 50%; bottom: -22px; transform: translateX(-50%); height: 230px; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; z-index: 800; }
+/* fan rotation + hover lift are set inline from JS (renderHand) so they don't depend on CSS var support/caching */
+#hand .card { position: relative; width: 158px; margin: 0 -38px; transform-origin: bottom center; transition: transform .16s ease; pointer-events: auto; filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .45)); }
+#hand .card:hover { z-index: 50; }   /* lifted card sits above its neighbours; the rise itself is the inline transform */
+#hand .card .close, #hand .card .note, #hand .card .status { display: none !important; }
+#hand.receiving::before { content: ""; position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); width: 320px; height: 150px; border-radius: 20px; background: radial-gradient(closest-side, rgba(238, 242, 239, .16), transparent); border: 2px dashed rgba(238, 242, 239, .4); }
+
+/* ---- chrome: toolbar / search ---- */
+#bar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 12px; background: rgba(0, 0, 0, .4); backdrop-filter: blur(8px); }
+#bar input#search { font: inherit; font-size: 13px; color: #fff; background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .16); padding: 6px 10px; border-radius: 8px; width: 220px; outline: none; }
+#bar input#search::placeholder { color: rgba(255, 255, 255, .5); }
+#bar button { font: inherit; font-size: 13px; color: #eaedf1; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .14); padding: 6px 11px; border-radius: 8px; cursor: pointer; }   /* bar is always dark → keep text light in both themes */
+#bar button:hover { background: rgba(255, 255, 255, .18); }
+#count { font-size: 12px; color: rgba(255, 255, 255, .5); padding: 0 2px; }
+
+#trash { position: fixed; left: 22px; bottom: 22px; width: 66px; height: 66px; z-index: 850; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: rgba(0, 0, 0, .28); border: 2px dashed rgba(238, 242, 239, .35); opacity: .45; transition: all .14s ease; }
+#trash.hot { opacity: 1; transform: scale(1.12); background: rgba(216, 66, 59, .35); border-color: #d8423b; }
+
+/* ---- context menu ---- */
+#menu { position: fixed; z-index: 1100; min-width: 190px; background: #20242b; border: 1px solid rgba(255, 255, 255, .12); border-radius: 10px; padding: 6px; box-shadow: 0 18px 40px rgba(0, 0, 0, .5); display: none; }
+#menu.open { display: block; }
+#menu .item { padding: 8px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; color: #eee; white-space: nowrap; }
+#menu .item:hover { background: rgba(255, 255, 255, .12); }
+#menu .sep { height: 1px; background: rgba(255, 255, 255, .1); margin: 5px 4px; }
+#menu .item.danger { color: #f0867f; }
+
+/* ---- overlays (settings, onboarding) ---- */
+.overlay { position: fixed; inset: 0; z-index: 1200; background: rgba(0, 0, 0, .5); display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+.overlay.open { display: flex; }
+.panel { width: 460px; max-width: 92vw; max-height: 86vh; overflow: auto; background: #20242b; border: 1px solid rgba(255, 255, 255, .12); border-radius: 14px; padding: 22px 24px; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); }
+.panel h2 { margin: 0 0 14px; font-size: 18px; }
+.panel .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; font-size: 13px; }
+.panel .row label { color: #cfd3da; }
+.panel input[type=text], .panel input[type=number], .panel select, .panel textarea { font: inherit; font-size: 13px; color: #fff; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); border-radius: 7px; padding: 6px 8px; }
+.panel input[type=text], .panel textarea { width: 230px; }
+.panel textarea { height: 70px; resize: vertical; }
+.panel input[type=range] { width: 180px; }
+.panel .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.panel .actions button { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; cursor: pointer; border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .1); color: #fff; }
+.panel .actions button.primary { background: var(--accent); border-color: var(--accent); }
+.panel .hint { font-size: 11.5px; color: rgba(255, 255, 255, .45); margin-top: 2px; }
+
+/* ---- empty state ---- */
+#empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none; z-index: 400; }
+#empty.show { display: flex; }
+#empty .card-stub { text-align: center; color: var(--chalk); opacity: .75; max-width: 440px; line-height: 1.6; }
+#empty h1 { font-family: var(--label-font); font-size: 40px; color: var(--chalk); margin: 0 0 10px; }
+
+/* ---- toast (undo) ---- */
+#toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 1300; background: #20242b; border: 1px solid rgba(255, 255, 255, .14); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: #eee; display: none; align-items: center; gap: 12px; box-shadow: 0 14px 30px rgba(0, 0, 0, .5); }
+#toast.show { display: flex; }
+#toast button { font: inherit; font-size: 13px; color: var(--accent); background: none; border: none; cursor: pointer; font-weight: 600; }
+#hint { position: fixed; right: 16px; bottom: 16px; z-index: 500; font-size: 12px; color: var(--chalk); opacity: .5; text-align: right; line-height: 1.6; pointer-events: none; }

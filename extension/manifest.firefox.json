@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "cardtable",
+  "version": "0.1.0",
+  "description": "Your tabs as cards on a spatial canvas — organize them, annotate them, and let them sleep.",
+  "permissions": ["tabs", "storage", "unlimitedStorage", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "scripts": ["shared.js", "background.js"] },
+  "action": { "default_title": "Open cardtable canvas" },
+  "commands": {
+    "focus-canvas": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Jump to the cardtable canvas"
+    }
+  },
+  "chrome_url_overrides": { "newtab": "newtab.html" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["shared.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": { "id": "cardtable@cardtable.local", "strict_min_version": "121.0" }
+  }
+}

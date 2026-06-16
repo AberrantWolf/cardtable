@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cardtable</title>
+  <link rel="stylesheet" href="newtab.css" />
+</head>
+<body>
+  <div id="table">
+    <div id="world">
+      <svg id="groups" width="40000" height="40000" style="position:absolute; left:-20000px; top:-20000px; overflow:visible;">
+        <defs>
+          <filter id="chalk" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.014" numOctaves="2" seed="7" result="n" />
+            <feDisplacementMap in="SourceGraphic" in2="n" scale="7" xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+        </defs>
+        <g id="group-paths" filter="url(#chalk)"></g>
+      </svg>
+      <div id="cards"></div>
+    </div>
+    <div id="labels"></div>
+  </div>
+
+  <div id="bar">
+    <input id="search" type="search" placeholder="Search tabs…  ( / )" autocomplete="off" />
+    <span id="count"></span>
+    <button id="btn-fit" title="Fit all (F)">fit</button>
+    <button id="btn-settings" title="Settings">⚙</button>
+  </div>
+
+  <div id="trash" title="Drop a card here to close it for good">🗑</div>
+  <div id="hand"></div>
+
+  <div id="menu"></div>
+
+  <div id="empty">
+    <div class="card-stub">
+      <h1>your table is empty</h1>
+      <p>Open some pages in new tabs — they’ll land in your hand at the bottom. Drag them
+      onto the table to arrange them, drop one near another to form a group, and
+      double-click a card to jump back to that tab.</p>
+    </div>
+  </div>
+
+  <div id="settings" class="overlay">
+    <div class="panel">
+      <h2>Settings</h2>
+      <div class="row"><label>Theme</label>
+        <select id="s-theme"><option value="slate">Slate felt</option><option value="paper">Paper</option></select></div>
+      <div class="row"><label>Felt color</label><input id="s-felt" type="color" /></div>
+      <div class="row"><label>Card width</label><input id="s-cardw" type="range" min="150" max="340" step="2" /></div>
+      <div class="row"><label>Title lines</label><input id="s-titlelines" type="number" min="1" max="5" /></div>
+      <div class="row"><label>Label font</label>
+        <select id="s-font">
+          <option value='"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive' style='font-family:"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive'>Handwriting</option>
+          <option value='"Comic Sans MS","Comic Neue",cursive' style='font-family:"Comic Sans MS","Comic Neue",cursive'>Casual</option>
+          <option value='ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif' style='font-family:system-ui,"Segoe UI",sans-serif'>Sans-serif</option>
+          <option value='Georgia,"Times New Roman",serif' style='font-family:Georgia,serif'>Serif</option>
+          <option value='ui-monospace,"Cascadia Code",Consolas,monospace' style='font-family:Consolas,ui-monospace,monospace'>Monospace</option>
+          <option value='"Trebuchet MS",ui-rounded,"Segoe UI",sans-serif' style='font-family:"Trebuchet MS",sans-serif'>Rounded</option>
+        </select></div>
+      <div class="row"><label>Label size</label><input id="s-size" type="range" min="12" max="28" step="1" /></div>
+      <div class="row"><label>Screenshot quality</label><input id="s-quality" type="range" min="0.3" max="0.95" step="0.05" /></div>
+      <div class="row"><label>Keep this many tabs awake</label><input id="s-maxlive" type="number" min="1" max="20" /></div>
+      <div class="row"><label>New tabs land in the hand</label><input id="s-hand" type="checkbox" /></div>
+      <div class="row"><label>Draw a group around lone cards</label><input id="s-solo" type="checkbox" /></div>
+      <div class="row"><label>Restore deep link after SSO re-login</label><input id="s-guard" type="checkbox" /></div>
+      <div class="row"><label>Reduce motion</label><input id="s-reduce" type="checkbox" /></div>
+      <div class="row" style="align-items:flex-start"><label>SSO / auth hosts<div class="hint">one per line; substring match</div></label><textarea id="s-authhosts"></textarea></div>
+      <div class="actions">
+        <button id="s-export">Export board</button>
+        <button id="s-import">Import…</button>
+        <button id="s-cancel">Close</button>
+        <button id="s-save" class="primary">Save</button>
+      </div>
+      <input id="s-file" type="file" accept="application/json" style="display:none" />
+    </div>
+  </div>
+
+  <div id="toast"><span id="toast-msg"></span><button id="toast-undo">Undo</button></div>
+  <div id="hint">drag felt = pan · wheel = zoom · click = select · double-click = open · ⌫ = delete · ⌘/ctrl-Z = undo</div>
+
+  <script src="shared.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
