@@ -75,13 +75,11 @@ reduce motion · **Export / Import board** (JSON; cards come back as cold until 
 `/` search · `F` fit · `Delete` close selected · `Ctrl/⌘-Z` undo · `Enter` open selected ·
 `Esc` deselect · `Alt+Shift+C` jump to canvas (rebind at `chrome://extensions/shortcuts`).
 
-## Status & honesty
+## Status & known rough edges
 
-Syntax-validated and assembled, but **not yet exercised in a live browser** here — expect
-to shake out runtime issues on first load (check the service-worker console in
-`chrome://extensions` and the page console on the new tab). Known sharp edges:
+In daily personal use, but not yet formally released or store-reviewed. Known rough edges:
 
-- The "sticky outline on remove" glitch may still surface.
+- The "sticky outline on remove" glitch can still surface.
 - Live new-group preview only shows for single-card drags, not multi-select drags.
 - Aggressive sleeping (default keep-1) means lots of tabs in Chromium's strip; pair with
   Firefox + hidden strip for the intended feel.

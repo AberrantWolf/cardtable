@@ -133,13 +133,15 @@ function buildCard(c, inHand) {
     if (filter && !matches(c)) el.classList.add("dim");
   }
   const shot = c.shotUrl ? `<img class="snap" src="${c.shotUrl}" draggable="false" alt="">` : `<div class="ph">${placeholderLetter(c)}</div>`;
-  const fav = c.favicon ? `<img class="fav" src="${escapeHtml(c.favicon)}" draggable="false" alt="" onerror="this.style.display='none'">` : "";
+  const fav = c.favicon ? `<img class="fav" src="${escapeHtml(c.favicon)}" draggable="false" alt="">` : "";
   el.innerHTML =
     `<div class="shot">${shot}</div>` +
     (inHand ? "" : `<div class="status ${c.state || "cold"}" title="${c.state}"></div>`) +
     `<div class="label">${fav}<span class="title">${escapeHtml(c.title)}</span></div>` +
     (inHand ? "" : `<div class="note" contenteditable="true" spellcheck="false">${escapeHtml(c.note)}</div><div class="close" title="close for good">✕</div>`);
   el.addEventListener("dragstart", (e) => e.preventDefault());   // never let the browser native-drag the screenshot
+  const favEl = el.querySelector(".fav");
+  if (favEl) favEl.addEventListener("error", () => { favEl.style.display = "none"; });   // inline onerror is blocked by the MV3 page CSP
   return el;
 }
 function escapeHtml(s) { return (s || "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m])); }

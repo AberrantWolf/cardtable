@@ -124,22 +124,33 @@ async function applySleepPolicy() {
   } catch (e) {}
 }
 
+// ---------------- transient state, session-backed (survives SW suspension) ----------------
+// MV3 service workers are killed when idle; in-memory Maps would drop the SSO guard mid-redirect
+// and the one-shot scroll restore. storage.session is in-memory, per-session, cleared on browser close.
+const SES = X.storage.session;
+const gkey = (id) => "guard:" + id, rkey = (id) => "restore:" + id;
+async function getGuard(id) { try { const r = await SES.get(gkey(id)); return r[gkey(id)] || null; } catch (e) { return null; } }
+async function setGuard(id, g) { try { await SES.set({ [gkey(id)]: g }); } catch (e) {} }
+async function delGuard(id) { try { await SES.remove(gkey(id)); } catch (e) {} }
+async function setRestore(id, y) { try { await SES.set({ [rkey(id)]: y }); } catch (e) {} }
+async function delRestore(id) { try { await SES.remove(rkey(id)); } catch (e) {} }
+async function getRestore(id) { try { const r = await SES.get(rkey(id)); return r[rkey(id)] || 0; } catch (e) { return 0; } }
+
 // ---------------- SSO deep-link guard ----------------
-const guards = new Map();
-function armGuard(tabId, url) { if (settings.deepLinkGuard) guards.set(tabId, { expectedUrl: url, sawAuth: false, ts: Date.now() }); }
-X.webNavigation.onCommitted.addListener((d) => {
+async function armGuard(tabId, url) { if (settings.deepLinkGuard) await setGuard(tabId, { expectedUrl: url, sawAuth: false, ts: Date.now() }); }
+X.webNavigation.onCommitted.addListener(async (d) => {
   if (d.frameId !== 0) return;
-  const g = guards.get(d.tabId); if (!g) return;
-  try { if (CT.isAuthHost(new URL(d.url).hostname, settings.authHosts)) g.sawAuth = true; } catch (e) {}
+  const g = await getGuard(d.tabId); if (!g) return;
+  try { if (CT.isAuthHost(new URL(d.url).hostname, settings.authHosts)) { g.sawAuth = true; await setGuard(d.tabId, g); } } catch (e) {}
 });
 X.webNavigation.onCompleted.addListener(async (d) => {
   if (d.frameId !== 0) return;
-  const g = guards.get(d.tabId); if (!g) return;
-  if (Date.now() - g.ts > 90000) { guards.delete(d.tabId); return; }
+  const g = await getGuard(d.tabId); if (!g) return;
+  if (Date.now() - g.ts > 90000) { await delGuard(d.tabId); return; }
   if (!g.sawAuth) return;                                   // only act after an actual auth bounce
-  if (CT.normUrl(d.url) === CT.normUrl(g.expectedUrl)) { guards.delete(d.tabId); return; }
+  if (CT.normUrl(d.url) === CT.normUrl(g.expectedUrl)) { await delGuard(d.tabId); return; }
   if (!CT.sameOrigin(d.url, g.expectedUrl)) return;         // landed on a different site on purpose → leave it
-  guards.delete(d.tabId);
+  await delGuard(d.tabId);
   try { await X.tabs.update(d.tabId, { url: g.expectedUrl }); } catch (e) {}
 });
 
@@ -150,7 +161,7 @@ async function openCard(cardId) {
   if (card.tabId != null) {
     try {
       const tab = await X.tabs.get(card.tabId);
-      armGuard(card.tabId, card.url);                       // activating a sleeping tab reloads it → guard catches re-auth
+      await armGuard(card.tabId, card.url);                 // activating a sleeping tab reloads it → guard catches re-auth
       await X.tabs.update(card.tabId, { active: true });
       await X.windows.update(tab.windowId, { focused: true });
       card.state = "live"; card.lastSeen = Date.now(); await idbPut(CT.STORES.tabs, card);
@@ -158,14 +169,13 @@ async function openCard(cardId) {
     } catch (e) { /* tab is gone → fall through to cold reopen */ }
   }
   const tab = await X.tabs.create({ url: card.url, active: true });
-  armGuard(tab.id, card.url);
-  pendingRestore.set(tab.id, card.scrollY || 0);     // restore scroll once, only on this cold reopen
+  await armGuard(tab.id, card.url);
+  await setRestore(tab.id, card.scrollY || 0);       // restore scroll once, only on this cold reopen
   card.tabId = tab.id; card.state = "live"; card.windowId = tab.windowId; card.lastSeen = Date.now();
   await idbPut(CT.STORES.tabs, card);
   broadcastChanged(); debouncedSleep();
 }
 const deleting = new Set();
-const pendingRestore = new Map();        // tabId -> scrollY, consumed once by a freshly cold-reopened page
 async function deleteCard(cardId) {
   const card = await idbGet(CT.STORES.tabs, cardId);
   if (card && card.tabId != null) { deleting.add(card.tabId); try { await X.tabs.remove(card.tabId); } catch (e) {} }
@@ -207,6 +217,7 @@ X.tabs.onActivated.addListener(async ({ tabId }) => {
   debouncedSleep();
 });
 X.tabs.onRemoved.addListener(async (tabId) => {
+  delGuard(tabId); delRestore(tabId);                       // drop any session-backed state for this tab
   if (deleting.has(tabId)) { deleting.delete(tabId); return; }
   const card = await cardByTab(tabId);
   if (card) { card.state = "cold"; card.tabId = null; await idbPut(CT.STORES.tabs, card); broadcastChanged(); }
@@ -282,7 +293,7 @@ X.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true }); break;
         }
         case CT.MSG.SCROLL: { if (sender.tab) { const c = await cardByTab(sender.tab.id); if (c) { c.scrollY = msg.y; await idbPut(CT.STORES.tabs, c); } } sendResponse({ ok: true }); break; }
-        case CT.MSG.GET_SCROLL: { const y = sender.tab ? (pendingRestore.get(sender.tab.id) || 0) : 0; if (sender.tab) pendingRestore.delete(sender.tab.id); sendResponse({ y }); break; }
+        case CT.MSG.GET_SCROLL: { let y = 0; if (sender.tab) { y = await getRestore(sender.tab.id); await delRestore(sender.tab.id); } sendResponse({ y }); break; }
         default: sendResponse({});
       }
     } catch (e) { sendResponse({ error: String(e) }); }

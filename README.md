@@ -84,8 +84,8 @@ tabs. **All of it runs locally; nothing is sent anywhere.**
 
 ## 🗺️ Status & roadmap
 
-This is the first pass of something I find genuinely useful, but it's still shaking out
-runtime issues on real browsers. Ideas for later (mostly as I want them myself): tiering /
+This is the first pass of something I've been using daily and find genuinely useful —
+not yet formally released. Ideas for later (mostly as I want them myself): tiering /
 cold-archive for hundreds of tabs · freeform sticky notes · rubber-band (marquee)
 multi-select · arrow-key navigation & fuller a11y · sync across devices · screenshots
 included in export.
