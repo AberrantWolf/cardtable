@@ -101,12 +101,24 @@ async function downscale(dataUrl, maxW, quality) {
 }
 async function captureTab(tab) {
   if (!tab || !CT.isTrackable(tab.url) || isCanvas(tab.url)) return;
+  // captureVisibleTab shoots whatever is active in the window *right now*, but this capture was
+  // deferred ~400ms (and may be queued behind others), so you can switch tabs before it fires.
+  // Confirm the intended tab is still the window's active tab — before AND after the shot — else
+  // we'd store, say, tab B's image on tab A's card. Re-resolve to the fresh tab object too.
+  const stillActive = async () => {
+    try { const a = (await X.tabs.query({ active: true, windowId: tab.windowId }))[0]; return a && a.id === tab.id ? a : null; }
+    catch (e) { return null; }
+  };
+  const live = await stillActive();
+  if (!live || !CT.isTrackable(live.url) || isCanvas(live.url)) return;   // switched away during the debounce
+  tab = live;
   const now = Date.now();
   if (now - (lastCap.get(tab.id) || 0) < MIN_CAP_MS) return;
   lastCap.set(tab.id, now);
   let dataUrl;
   try { dataUrl = await X.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: Math.round((settings.shotQuality || 0.7) * 100) }); }
   catch (e) { logCapErr("capture", tab, e); return; }   // often benign (tab not visible/focused); a permission error surfaces here too
+  if (!(await stillActive())) return;   // a switch raced the capture itself — drop the (possibly wrong) image
   try {
     const blob = await downscale(dataUrl, settings.shotMaxWidth || 480, settings.shotQuality || 0.7);
     const card = await ensureCardForTab(tab);
