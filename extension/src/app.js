@@ -190,11 +190,14 @@ function createGroupView(g) {
   name.addEventListener("paste", plainPaste);
   name.addEventListener("input", () => { if (!name.textContent.trim() && name.innerHTML) name.innerHTML = ""; });
   name.addEventListener("blur", () => {
+    // loadAll() rebuilds state.groups with fresh objects on every CHANGED broadcast, so the
+    // captured `g` may be orphaned — write to the object renderGroups actually reads, by id.
+    const grp = state.groups.find((x) => x.id === g.id) || g;
     const txt = name.textContent.trim();
-    const mem = membersOf(g.id);
+    const mem = membersOf(grp.id);
     const auto = mem.length === 1 && mem[0] ? mem[0].title : "";   // lone card's auto-title
     const v = txt === auto ? "" : txt;          // leaving the auto-title unchanged keeps it auto; a real edit sticks
-    if (v !== g.name) { g.name = v; saveGroup(g); }
+    if (v !== grp.name) { grp.name = v; saveGroup(grp); }
   });
   wrap.style.opacity = "0"; label.style.opacity = "0";
   requestAnimationFrame(() => { wrap.style.opacity = "1"; label.style.opacity = "1"; });
@@ -368,9 +371,13 @@ function startCardDrag(e, c, el) {
     hotZones(ev.clientX, ev.clientY);
   };
   const up = (ev) => {
-    el.releasePointerCapture(e.pointerId); el.classList.remove("dragging");
-    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+    try { el.releasePointerCapture(e.pointerId); } catch (er) {} el.classList.remove("dragging");
+    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
     clearZones(); hidePreview(); busy = false;
+    if (ev.type === "pointercancel") {   // tab hidden mid-drag (e.g. a card opened a page): no real drop — commit positions, never trash/hand
+      if (moved) { if (!movingMany) finalizeGroup(c); group.forEach((k) => persist(k)); }
+      render(); afterDrag(); return;
+    }
     if (!moved) { afterDrag(); return; }                         // a click: selection already handled
     if (overTrash(ev.clientX, ev.clientY)) { removeCards(group.map((k) => k.cardId)); afterDrag(); return; }
     if (overHand(ev.clientX, ev.clientY)) { group.forEach((k) => { k.placed = false; k.group = null; persist(k); }); pruneGroups(); render(); afterDrag(); return; }
@@ -381,6 +388,7 @@ function startCardDrag(e, c, el) {
   };
   el.addEventListener("pointermove", move);
   el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
 }
 function afterDrag() { if (pendingReload) { pendingReload = false; scheduleReload(); } }
 
@@ -401,10 +409,10 @@ function startGroupDrag(e, g) {                       // initiated by pressing o
   };
   const up = () => {
     try { tableEl.releasePointerCapture(e.pointerId); } catch (er) {}
-    tableEl.removeEventListener("pointermove", move); tableEl.removeEventListener("pointerup", up);
+    tableEl.removeEventListener("pointermove", move); tableEl.removeEventListener("pointerup", up); tableEl.removeEventListener("pointercancel", up);
     busy = false; tableEl.style.cursor = ""; orig.forEach((o) => persist(o.c)); afterDrag();
   };
-  tableEl.addEventListener("pointermove", move); tableEl.addEventListener("pointerup", up);
+  tableEl.addEventListener("pointermove", move); tableEl.addEventListener("pointerup", up); tableEl.addEventListener("pointercancel", up);
 }
 
 // --- group-by-outline: zoom-aware hit-test of the pointer against group outlines ---
@@ -459,14 +467,15 @@ function startHandDrag(e, c, el) {
     hotZones(ev.clientX, ev.clientY);
   };
   const drop = (ev) => {
-    floater.releasePointerCapture(e.pointerId);
-    floater.removeEventListener("pointermove", move); floater.removeEventListener("pointerup", drop);
+    try { floater.releasePointerCapture(e.pointerId); } catch (er) {}
+    floater.removeEventListener("pointermove", move); floater.removeEventListener("pointerup", drop); floater.removeEventListener("pointercancel", drop);
     clearZones(); hidePreview(); busy = false;
+    if (ev.type === "pointercancel") { floater.remove(); render(); afterDrag(); return; }   // canceled → card stays in the hand (never placed)
     if (overTrash(ev.clientX, ev.clientY)) { removeCards([c.cardId]); afterDrag(); return; }
     if (overHand(ev.clientX, ev.clientY)) { render(); afterDrag(); return; }   // stays in hand
     c.placed = true; finalizeGroup(c); persist(c); render(); afterDrag();
   };
-  floater.addEventListener("pointermove", move); floater.addEventListener("pointerup", drop);
+  floater.addEventListener("pointermove", move); floater.addEventListener("pointerup", drop); floater.addEventListener("pointercancel", drop);
 }
 
 // ---------------- drop zones ----------------
@@ -665,6 +674,13 @@ X.runtime.onMessage.addListener((msg) => {
   if (!msg) return;
   if (msg.type === CT.MSG.CHANGED) scheduleReload();
   else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || busy) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.replaceChildren(snapImg(u)); }); }   // document-wide: also updates cards in the hand
+});
+// Failsafe: a drag can't outlive the canvas tab being hidden (opening a card switches tabs). If a
+// pointerup/pointercancel is ever missed, `busy` would latch true and silently freeze every screenshot
+// update until reload. Release the latch on hide; on return, pull in anything that changed while away.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { if (busy) { busy = false; hidePreview(); clearZones(); } }
+  else { pendingReload = false; scheduleReload(); }
 });
 
 // ---------------- boot ----------------

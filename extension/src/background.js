@@ -20,7 +20,14 @@ function idbOpen() {
       if (!db.objectStoreNames.contains(CT.STORES.groups)) db.createObjectStore(CT.STORES.groups, { keyPath: "id" });
       if (!db.objectStoreNames.contains(CT.STORES.notes)) db.createObjectStore(CT.STORES.notes, { keyPath: "id" });
     };
-    req.onsuccess = () => res(req.result);
+    req.onsuccess = () => {
+      const conn = req.result;
+      // A suspended/torn-down event page can leave a stale or closed handle cached in `_db`; null it
+      // so the next call reopens instead of every transaction throwing silently until a restart.
+      conn.onclose = () => { if (_db === conn) _db = null; };
+      conn.onversionchange = () => { try { conn.close(); } catch (e) {} if (_db === conn) _db = null; };
+      res(conn);
+    };
     req.onerror = () => rej(req.error);
   });
 }
@@ -70,6 +77,18 @@ async function ensureCardForTab(tab) {
 // ---------------- screenshots ----------------
 const lastCap = new Map();
 const MIN_CAP_MS = 1500;
+// Capture/store failures were historically swallowed silently, which hid a total screenshot
+// blackout (empty `shots` store) until a browser restart. Log each distinct failure once: the
+// common "tab not visible/focused" cases collapse to a single line, while a real problem —
+// missing host permission, a wedged OffscreenCanvas, a stuck IndexedDB handle — shows its message.
+const loggedCapErrs = new Set();
+function logCapErr(stage, tab, e) {
+  const msg = (e && e.message) || String(e);
+  const key = stage + "|" + msg;
+  if (loggedCapErrs.has(key)) return;
+  loggedCapErrs.add(key);
+  console.warn(`[cardtable] screenshot ${stage} failed:`, msg, "—", tab && tab.url);
+}
 async function downscale(dataUrl, maxW, quality) {
   const blob = await (await fetch(dataUrl)).blob();
   const bmp = await createImageBitmap(blob);
@@ -87,7 +106,7 @@ async function captureTab(tab) {
   lastCap.set(tab.id, now);
   let dataUrl;
   try { dataUrl = await X.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: Math.round((settings.shotQuality || 0.7) * 100) }); }
-  catch (e) { return; }                 // not visible / not focused / not permitted
+  catch (e) { logCapErr("capture", tab, e); return; }   // often benign (tab not visible/focused); a permission error surfaces here too
   try {
     const blob = await downscale(dataUrl, settings.shotMaxWidth || 480, settings.shotQuality || 0.7);
     const card = await ensureCardForTab(tab);
@@ -97,7 +116,7 @@ async function captureTab(tab) {
     card.url = tab.url; card.state = "live"; card.lastSeen = now;
     await idbPut(CT.STORES.tabs, card);
     broadcastShot(card.cardId);
-  } catch (e) {}
+  } catch (e) { logCapErr("store", tab, e); }
 }
 const scheduleCapture = (tab) => setTimeout(() => captureTab(tab), 400);
 

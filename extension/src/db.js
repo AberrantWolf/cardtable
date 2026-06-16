@@ -16,7 +16,13 @@ function open() {
       if (!db.objectStoreNames.contains(CT.STORES.groups)) db.createObjectStore(CT.STORES.groups, { keyPath: "id" });
       if (!db.objectStoreNames.contains(CT.STORES.notes)) db.createObjectStore(CT.STORES.notes, { keyPath: "id" });
     };
-    r.onsuccess = () => res(r.result);
+    r.onsuccess = () => {
+      const conn = r.result;
+      // Drop a stale/closed handle so the next call reopens rather than failing silently (mirrors background.js).
+      conn.onclose = () => { if (_db === conn) _db = null; };
+      conn.onversionchange = () => { try { conn.close(); } catch (e) {} if (_db === conn) _db = null; };
+      res(conn);
+    };
     r.onerror = () => rej(r.error);
   });
 }
