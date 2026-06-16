@@ -1,6 +1,10 @@
 {
   "background": { "scripts": ["shared.js", "background.js"] },
   "browser_specific_settings": {
-    "gecko": { "id": "cardtable@trashtools.net", "strict_min_version": "121.0" }
+    "gecko": {
+      "id": "cardtable@trashtools.net",
+      "strict_min_version": "121.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
   }
 }

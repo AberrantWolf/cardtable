@@ -1,0 +1,13 @@
+{
+  "name": "cardtable",
+  "private": true,
+  "description": "Tooling for the cardtable browser extension. The extension version lives in extension/manifest.base.json.",
+  "license": "MIT",
+  "scripts": {
+    "build": "bash extension/build.sh",
+    "lint": "npm run build && web-ext lint --source-dir=extension/dist/firefox"
+  },
+  "devDependencies": {
+    "web-ext": "^8.3.0"
+  }
+}

@@ -7,5 +7,5 @@ Thumbs.db
 *.swp
 *~
 
-# Node (not used yet, but safe)
+# Node
 node_modules/
