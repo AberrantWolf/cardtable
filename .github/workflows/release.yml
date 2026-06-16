@@ -1,0 +1,72 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g. `git tag v1.0.0 && git push origin v1.0.0`.
+# Tags must be store-legal numeric versions — Chrome accepts only 1-4 dot-separated
+# integers (no `-rc`/letters). For pre-1.0 release candidates use 0.x tags (e.g. v0.9.0,
+# v0.9.1): they sort below v1.0.0 and are auto-marked as GitHub pre-releases. (A 4th
+# component like v1.2.0.1 is also treated as a pre-release, for post-1.0 build candidates.)
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write          # needed to create the GitHub Release
+
+jobs:
+  release:
+    name: Build, sign, publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' -> version '$version' is not store-legal. Chrome requires 1-4 dot-separated integers, e.g. v1.0.0 or v1.0.0.1 (RC)."
+            exit 1
+          fi
+          echo "CARDTABLE_VERSION=$version" >> "$GITHUB_ENV"
+          if [[ "$version" =~ ^0\. || "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and lint
+        run: npm run lint          # CARDTABLE_VERSION (from $GITHUB_ENV) stamps both manifests
+
+      - name: Package Chromium zip
+        run: |
+          cd extension/dist/chromium
+          zip -r -X "$GITHUB_WORKSPACE/cardtable-chromium-$CARDTABLE_VERSION.zip" .
+
+      - name: Sign Firefox xpi
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: |
+          npx web-ext sign \
+            --source-dir=extension/dist/firefox \
+            --artifacts-dir="$GITHUB_WORKSPACE/web-ext-artifacts" \
+            --channel=unlisted
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "cardtable $CARDTABLE_VERSION" \
+            --generate-notes \
+            "${flags[@]}" \
+            "cardtable-chromium-$CARDTABLE_VERSION.zip" \
+            web-ext-artifacts/*.xpi

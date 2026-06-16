@@ -28,6 +28,10 @@ It replaces your new-tab page, so the canvas *is* home.
 
 The extension targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 
+**Packaged builds** are attached to each [release](https://github.com/AberrantWolf/cardtable/releases):
+the Firefox `.xpi` is Mozilla-signed (open it in Firefox to install); for Chrome, unzip the
+build and load it via *Developer mode → Load unpacked*. To build from source instead:
+
 ```sh
 cd extension && ./build.sh   # assembles dist/chromium and dist/firefox (needs Node.js)
 ```

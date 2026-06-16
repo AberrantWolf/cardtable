@@ -29,6 +29,14 @@ cd extension && ./build.sh   # merges the manifest + copies src/ into dist/{chro
 `manifest.base.json` with the per-target overlay via `build-manifest.mjs` (needs Node).
 `extension/dist/` is gitignored.
 
+Releases are cut by `.github/workflows/release.yml` on a `v*` tag: it stamps the version
+from the tag (`CARDTABLE_VERSION` overrides the base manifest), zips the Chromium build,
+signs the Firefox `.xpi` via AMO (`web-ext sign`; needs `AMO_API_KEY` / `AMO_API_SECRET`
+repo secrets), and attaches both to a GitHub Release. Tags must be store-legal numeric
+versions — Chrome allows only 1–4 dot-separated integers, no `-rc`/letters. Use `0.x` tags
+(e.g. `v0.9.0`) for pre-1.0 release candidates — they sort below `v1.0.0` and are
+auto-marked as GitHub pre-releases.
+
 - **Chromium**: `chrome://extensions` → Developer mode → Load unpacked → `dist/chromium`
 - **Firefox**: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `dist/firefox/manifest.json`
 
