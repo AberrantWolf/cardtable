@@ -46,7 +46,9 @@ async function loadSettings() {
   try { const r = await X.storage.local.get("settings"); settings = { ...CT.DEFAULTS, ...(r.settings || {}) }; } catch (e) {}
 }
 X.storage.onChanged.addListener((ch, area) => {
-  if (area === "local" && ch.settings) settings = { ...CT.DEFAULTS, ...(ch.settings.newValue || {}) };
+  if (area !== "local" || !ch.settings) return;
+  settings = { ...CT.DEFAULTS, ...(ch.settings.newValue || {}) };
+  applyCanvasPin();   // reflect a pinCanvasTab toggle onto the already-open canvas right away
 });
 
 // ---------------- helpers ----------------
@@ -229,13 +231,38 @@ async function focusCanvas() {
     await X.tabs.update(existing.id, { active: true });
     try { const t = await X.tabs.get(existing.id); await X.windows.update(t.windowId, { focused: true }); } catch (e) {}
   } else {
-    await X.tabs.create({ url });
+    await X.tabs.create({ url, pinned: settings.pinCanvasTab !== false });
   }
   debouncedSleep();
+}
+// Pin/unpin any open canvas tab to match the current setting (no-op if already correct).
+async function applyCanvasPin() {
+  const want = settings.pinCanvasTab !== false;
+  try { for (const t of await X.tabs.query({})) if (isCanvas(t.url) && t.pinned !== want) await X.tabs.update(t.id, { pinned: want }); } catch (e) {}
+}
+
+// New-tab takeover (opt-in via settings.newTabOpensCanvas). When enabled, a fresh browser
+// new tab routes to the single pinned canvas instead of staying blank. Off by default — the
+// toolbar button / Alt+Shift+C are the normal entry points and the canvas stays a singleton.
+const NEWTAB_URLS = ["chrome://newtab/", "chrome://new-tab-page/", "edge://newtab/", "brave://newtab/", "about:newtab", "about:home"];
+const isNativeNewTab = (tab) => { const u = tab.pendingUrl || tab.url || ""; return NEWTAB_URLS.includes(u); };
+async function routeNewTabToCanvas(tab) {
+  const url = X.runtime.getURL("newtab.html");
+  const all = await X.tabs.query({});
+  const existing = all.find((t) => isCanvas(t.url) && t.id !== tab.id);
+  const winCount = all.filter((t) => t.windowId === tab.windowId).length;
+  if (existing && winCount > 1) {   // a canvas already exists and closing the blank tab won't empty its window
+    try { await X.tabs.update(existing.id, { active: true }); } catch (e) {}
+    try { await X.windows.update(existing.windowId, { focused: true }); } catch (e) {}
+    try { await X.tabs.remove(tab.id); } catch (e) {}
+  } else {                          // no canvas yet (or this is the window's only tab) — make this tab the singleton
+    try { await X.tabs.update(tab.id, { url, pinned: settings.pinCanvasTab !== false }); } catch (e) {}
+  }
 }
 
 // ---------------- tab events ----------------
 X.tabs.onCreated.addListener((tab) => { if (CT.isTrackable(tab.url) && !isCanvas(tab.url)) ensureCardForTab(tab); });
+X.tabs.onCreated.addListener((tab) => { if (settings.newTabOpensCanvas && tab.active && isNativeNewTab(tab)) routeNewTabToCanvas(tab); });
 X.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (isCanvas(tab.url) || !CT.isTrackable(tab.url)) return;
   if (!(info.url || info.title || info.favIconUrl || info.status === "complete")) return;

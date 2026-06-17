@@ -5,8 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 cardtable shows your browser tabs as Polaroid-style cards on a pannable/zoomable 2D
-canvas that replaces the new-tab page. Cards can be grouped (drawn as hand-drawn chalk
-blobs), annotated, and let sleep. There is **no package.json, no npm, no test suite, and
+canvas. The canvas is a single tab you summon with the toolbar button or `Alt+Shift+C`
+(focus-or-create, so it stays a singleton); pinned by default (`pinCanvasTab` toggles
+it). It no longer overrides the new-tab page by default, though a `newTabOpensCanvas`
+setting can opt back into that.
+Cards can be grouped (drawn as hand-drawn chalk blobs), annotated, and let sleep. There is **no package.json, no npm, no test suite, and
 no linter** — it's vanilla JS run directly by the browser; the only build step is a small
 Node script that merges the per-browser manifest.
 
@@ -54,7 +57,7 @@ globalThis.chrome` idiom abstracts the WebExtension API across Firefox/Chromium.
 | `shared.js` | all (bg, content, page) | Single global `CT`: DB names, `MSG.*` message types, `DEFAULTS`, pure host/url helpers. Classic script; **no DOM or API calls at load time.** |
 | `background.js` | service worker (Chromium) / event page (Firefox) | Tab lifecycle, screenshots, sleep policy, SSO deep-link guard, restart reconciliation, the `onMessage` command API. |
 | `content.js` | every http(s) page | Reports title/favicon/url, pings for a capture while visible, saves scroll, restores scroll once after a cold reopen. |
-| `app.js` | the canvas (new-tab page) | All UI: card/group/hand rendering, dragging, grouping math, selection, notes, undo, settings, import/export. |
+| `app.js` | the canvas page (`newtab.html`) | All UI: card/group/hand rendering, dragging, grouping math, selection, notes, undo, settings, import/export. |
 | `db.js` | page only | Page-side IndexedDB accessor (`DBP` default export). |
 | `geometry.js` | page only | Pure group-outline math (convex hull → Chaikin smoothing → chalk strokes). |
 

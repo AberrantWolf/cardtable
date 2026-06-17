@@ -41,6 +41,8 @@
       captureIntervalMs: 6000,
       maxLiveTabs: 1,                 // sleep policy knob; raise (or add tiering) later
       handOnNewTab: true,
+      newTabOpensCanvas: false,       // opt-in: route the browser's new tab to the single canvas tab
+      pinCanvasTab: true,             // pin the canvas tab (compact, leftmost, can't be closed by accident)
       soloGroups: false,
       showFavicons: true,             // off = don't render (or fetch) per-card site favicons
       reducedMotion: false,

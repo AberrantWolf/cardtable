@@ -927,6 +927,8 @@ function openSettings() {
   $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
   $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
   $("s-favicons").checked = S.showFavicons !== false;
+  $("s-newtab").checked = !!S.newTabOpensCanvas;
+  $("s-pin").checked = S.pinCanvasTab !== false;
   $("s-authhosts").value = (S.authHosts || []).join("\n");
   syncGuardDep();
   refreshPermUI();
@@ -950,6 +952,8 @@ $("s-save").addEventListener("click", async () => {
   S.groupSize = Math.max(14, Math.min(48, +$("s-groupsize").value || CT.DEFAULTS.groupSize));
   S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
   S.showFavicons = $("s-favicons").checked;
+  S.newTabOpensCanvas = $("s-newtab").checked;
+  S.pinCanvasTab = $("s-pin").checked;
   S.authHosts = $("s-authhosts").value.split("\n").map((s) => s.trim()).filter(Boolean);
   await saveSettings(); applyTheme(); ensureGroups(); closeSettings(); render();
 });

@@ -24,5 +24,6 @@ Load it:
   Chromium  → chrome://extensions → enable Developer mode → "Load unpacked" → dist/chromium
   Firefox   → about:debugging#/runtime/this-firefox → "Load Temporary Add-on" → dist/firefox/manifest.json
 
-Open a normal new tab to see the canvas (it overrides the new-tab page).
+Open the canvas with the toolbar button or Alt+Shift+C (it's a single pinned tab).
+Prefer it on every new tab? Settings → Behavior → "Open the canvas on every new tab".
 EOF
