@@ -66,12 +66,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .card .shot img.snap { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
 .card .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 54px; font-weight: 700; color: rgba(255, 255, 255, .9); text-transform: uppercase; }
 .card .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(160deg, rgba(255, 255, 255, .14), rgba(0, 0, 0, .22)); }
-.card .label { min-height: var(--label-h); display: flex; align-items: center; gap: 8px; padding: 2px 3px 5px; font-family: var(--label-font); font-size: var(--label-size); color: #2a2a26; }
-.card .label img.fav { width: 16px; height: 16px; flex: 0 0 auto; border-radius: 3px; align-self: flex-start; margin-top: 2px; }
+.card .label { min-height: var(--label-h); display: flex; align-items: center; padding: 2px 3px 5px; font-family: var(--label-font); font-size: var(--label-size); color: #2a2a26; }
+/* favicon as a corner sticker on the photo: bigger than before so it stays recognisable zoomed out, and out of the caption so the title gets the full width */
+.card .fav { position: absolute; top: 7px; left: 7px; width: 26px; height: 26px; border-radius: 6px; background: rgba(255, 255, 255, .94); padding: 3px; object-fit: contain; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); z-index: 3; }
 .card .label .title { flex: 1 1 auto; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--title-lines); line-clamp: var(--title-lines); overflow-wrap: anywhere; line-height: 1.15; }
 .card .note { font-family: var(--title-font); font-size: 11.5px; line-height: 1.35; color: #6b6b61; padding: 0 3px 9px; white-space: pre-wrap; outline: none; min-height: 6px; }
 .card .note:empty::before { content: "✎ note"; color: #c2c2b6; }
-.card .status { position: absolute; top: 16px; left: 16px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .25); }
+.card .status { position: absolute; top: 16px; right: 16px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .25); }   /* top-right: the favicon owns the top-left corner */
 .card .status.live { background: #57c777; }
 .card .status.sleeping { background: #c9c9c0; }
 .card .status.cold { background: transparent; border: 2px solid #b9b9ae; width: 8px; height: 8px; }
@@ -89,6 +90,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 #hand .card:hover { z-index: 50; }   /* lifted card sits above its neighbours; the rise itself is the inline transform */
 #hand .card .close, #hand .card .note, #hand .card .status { display: none !important; }
 #hand.receiving::before { content: ""; position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); width: 320px; height: 150px; border-radius: 20px; background: radial-gradient(closest-side, rgba(238, 242, 239, .16), transparent); border: 2px dashed rgba(238, 242, 239, .4); }
+/* ghost = the dragged card's predicted resting spot in the hand (mirrors the dashed group preview) */
+#hand .card.ghost { opacity: .5; pointer-events: none; filter: none; }
+#hand .card.ghost .shot { outline: 2px dashed rgba(238, 242, 239, .7); outline-offset: -3px; }
 
 /* ---- chrome: toolbar / search ---- */
 #bar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 12px; background: rgba(0, 0, 0, .4); backdrop-filter: blur(8px); }
@@ -136,3 +140,32 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 #toast.show { display: flex; }
 #toast button { font: inherit; font-size: 13px; color: var(--accent); background: none; border: none; cursor: pointer; font-weight: 600; }
 #hint { position: fixed; right: 16px; bottom: 16px; z-index: 500; font-size: 12px; color: var(--chalk); opacity: .5; text-align: right; line-height: 1.6; pointer-events: none; }
+
+/* ---- url hover popup ---- */
+#urlpop {
+  position: fixed; z-index: 1250; display: none; max-width: 460px; padding: 5px 9px; border-radius: 7px;
+  background: rgba(20, 23, 28, .96); border: 1px solid rgba(255, 255, 255, .14); color: #e7eaf0;
+  font-family: var(--title-font); font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); pointer-events: none;
+  opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease;
+}
+#urlpop.show { opacity: 1; transform: translateY(0); }
+
+/* ---- settings: two-column with a live preview ---- */
+.settings-panel { width: 680px; }
+.s-body { display: flex; gap: 22px; align-items: flex-start; }
+.s-controls { flex: 1 1 auto; min-width: 0; }
+.s-section { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: rgba(255, 255, 255, .42); margin: 18px 0 4px; padding-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, .08); }
+.s-section:first-child { margin-top: 0; }
+.s-field { display: inline-flex; align-items: center; gap: 9px; }
+.s-val { font-size: 12px; color: rgba(255, 255, 255, .55); min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+.panel select#s-font { max-width: 230px; }
+.s-preview { flex: 0 0 232px; position: sticky; top: 0; }
+.s-preview-frame { height: 304px; border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); background: radial-gradient(135% 135% at 50% -10%, #262a32, #181b21); }
+.s-preview-frame .card { position: relative; cursor: default; pointer-events: none; transform-origin: center; box-shadow: var(--lift); }
+.s-preview-cap { text-align: center; font-size: 11px; color: rgba(255, 255, 255, .45); margin-top: 9px; }
+@media (max-width: 640px) {
+  .settings-panel { width: 460px; }
+  .s-body { flex-direction: column; }
+  .s-preview { align-self: center; }
+}

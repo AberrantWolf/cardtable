@@ -3,7 +3,8 @@ import DBP from "./db.js";
 
 const X = globalThis.browser || globalThis.chrome;
 const OFF = 20000, SVGNS = "http://www.w3.org/2000/svg";
-const GROUP_PAD = 50, ADD_PAD = 170, REMOVE_PAD = 300, NEW_GROUP_DIST = 340, HAND_ZONE_H = 150;
+const GROUP_PAD = 50, ADD_PAD = 170, REMOVE_PAD = 300, NEW_GROUP_DIST = 340, HAND_ZONE_H = 180;
+const HAND_W = 158, HAND_STEP = 82;   // hand card width and per-card footprint after -38px side margins
 
 const $ = (id) => document.getElementById(id);
 const tableEl = $("table"), worldEl = $("world"), cardsEl = $("cards"), labelsEl = $("labels"),
@@ -80,7 +81,12 @@ async function loadShot(cardId) {
   } catch (e) {}
   return null;
 }
-async function loadAll() {
+// loadAll rebuilds all page state from the DB; it awaits screenshot blobs, so two overlapping
+// calls (a direct reload racing a CHANGED-triggered one) could interleave and corrupt state.
+// Serialize them onto a chain — callers still get a promise that resolves after their own run.
+let loadChain = Promise.resolve();
+function loadAll() { loadChain = loadChain.then(_loadAll, _loadAll); return loadChain; }
+async function _loadAll() {
   const [tabs, layouts, groups] = await Promise.all([
     DBP.all(CT.STORES.tabs), DBP.all(CT.STORES.layout), DBP.all(CT.STORES.groups),
   ]);
@@ -110,6 +116,8 @@ async function loadAll() {
   for (const c of newPlacements) persist(c);
   // drop empty groups; in "outline around lone cards" mode give every lone card its own group
   state.groups = state.groups.filter((g) => { if (!state.cards.some((c) => c.group === g.id)) { delGroupRec(g.id); return false; } return true; });
+  const gids = new Set(state.groups.map((g) => g.id));
+  for (const c of state.cards) if (c.group && !gids.has(c.group)) c.group = null;   // heal refs to a pruned group (e.g. after undoing a delete) so the card isn't stuck outline-less
   if (S.soloGroups) for (const c of state.cards) if (c.placed && !c.group) ensureSoloGroup(c);
   // prune selection of vanished cards
   for (const id of [...selection]) if (!card(id)) selection.delete(id);
@@ -138,13 +146,13 @@ function buildCard(c, inHand) {
   const shot = elem("div", "shot");
   shot.append(c.shotUrl ? snapImg(c.shotUrl) : elem("div", "ph", { textContent: placeholderLetter(c) }));
   el.append(shot);
-  if (!inHand) el.append(elem("div", "status " + (c.state || "cold"), { title: c.state || "cold" }));
-  const label = elem("div", "label");
-  if (c.favicon) {
+  if (c.favicon) {   // favicon is a corner sticker so the caption can be all title (and it stays legible zoomed out)
     const fav = elem("img", "fav", { src: c.favicon, alt: "", draggable: false });
     fav.addEventListener("error", () => { fav.style.display = "none"; });   // inline onerror is blocked by the MV3 page CSP
-    label.append(fav);
+    el.append(fav);
   }
+  if (!inHand) el.append(elem("div", "status " + (c.state || "cold"), { title: c.state || "cold" }));
+  const label = elem("div", "label");
   label.append(elem("span", "title", { textContent: c.title || "" }));
   el.append(label);
   if (!inHand) {
@@ -171,6 +179,8 @@ function renderCards() {
     el.addEventListener("pointerdown", (e) => startCardDrag(e, c, el));
     el.addEventListener("dblclick", (e) => { if (!e.target.closest(".note") && !e.target.closest(".close")) openCard(c.cardId); });
     el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!selection.has(c.cardId)) selectOnly(c.cardId); openMenu(e.clientX, e.clientY, c); });
+    el.addEventListener("pointerenter", () => scheduleUrlPop(el, c.url));
+    el.addEventListener("pointerleave", hideUrlPop);
     cardsEl.appendChild(el);
   }
 }
@@ -235,33 +245,54 @@ function showPreview(cards) {
 }
 function hidePreview() { if (previewView) { previewView.wrap.remove(); previewView = null; } }
 
-// ---------------- hand ----------------
-function renderHand() {
-  handEl.replaceChildren();
-  const ids = handCards(); const n = ids.length;
-  const HAND_W = 158, SPREAD = HAND_W / 4, LIFT = 47;     // lift on hover; neighbours slide out a quarter-width
-  const items = [];
-  let hoverRAF = null;
-  function applyHover(h) {
-    items.forEach((it, k) => {
-      if (it.el.classList.contains("dragging")) return;
-      if (h < 0) it.el.style.transform = it.fan;                                   // rest
-      else if (k === h) it.el.style.transform = `translateY(-${LIFT}px) scale(1.12)`;
-      else it.el.style.transform = `translateX(${k < h ? -SPREAD : SPREAD}px) ${it.fan}`;   // slide away from the hovered card
-    });
+// Ghost card(s) docked in the hand while a drag hovers the hand area — the predicted resting
+// place, the hand-bound analogue of the dashed group preview.
+function showHandPreview(cards) {
+  const want = new Set(cards.map((c) => c.cardId));
+  for (const g of [...handEl.querySelectorAll(".ghost")]) if (!want.has(g.dataset.id)) g.remove();
+  for (const c of cards) {
+    if (handEl.querySelector(`.ghost[data-id="${c.cardId}"]`)) continue;
+    const el = buildCard(c, true); el.classList.add("ghost"); handEl.appendChild(el);
   }
-  ids.forEach((c, i) => {
-    const el = buildCard(c, true);
+  layoutHand();
+}
+function hideHandPreview() { const g = handEl.querySelectorAll(".ghost"); if (g.length) { g.forEach((e) => e.remove()); layoutHand(); } }
+
+// ---------------- hand ----------------
+// Fan layout is recomputed from the live DOM children so transient ghost previews re-fan with
+// the rest. Each card's resting transform is stashed on `el._fan` for the hover effect to read.
+let handHovered = null;
+function layoutHand() {
+  const cards = [...handEl.children]; const n = cards.length;
+  cards.forEach((el, i) => {
     const t = n === 1 ? 0 : i / (n - 1) - 0.5;
-    const fan = `rotate(${t * 16}deg) translateY(${Math.abs(t) * 26}px)`;
-    el.style.transform = fan;
-    items.push({ el, fan });
-    el.addEventListener("pointerenter", () => { if (hoverRAF) { cancelAnimationFrame(hoverRAF); hoverRAF = null; } applyHover(i); });
-    el.addEventListener("pointerleave", () => { hoverRAF = requestAnimationFrame(() => applyHover(-1)); });
+    el._fan = `rotate(${t * 16}deg) translateY(${Math.abs(t) * 26}px)`;
+    if (!el.classList.contains("dragging") && el !== handHovered) el.style.transform = el._fan;
+  });
+}
+function handHover(el) {
+  handHovered = el;
+  const cards = [...handEl.children]; const hi = el ? cards.indexOf(el) : -1;
+  const SPREAD = HAND_W / 4, LIFT = 47;                   // lift on hover; neighbours slide out a quarter-width
+  cards.forEach((it, k) => {
+    if (it.classList.contains("dragging")) return;
+    if (hi < 0) it.style.transform = it._fan;                                     // rest
+    else if (k === hi) it.style.transform = `translateY(-${LIFT}px) scale(1.12)`;
+    else it.style.transform = `translateX(${k < hi ? -SPREAD : SPREAD}px) ${it._fan}`;   // slide away from the hovered card
+  });
+}
+function renderHand() {
+  handHovered = null;
+  handEl.replaceChildren();
+  for (const c of handCards()) {
+    const el = buildCard(c, true);
+    el.addEventListener("pointerenter", () => { handHover(el); scheduleUrlPop(el, c.url); });
+    el.addEventListener("pointerleave", () => { handHover(null); hideUrlPop(); });
     el.addEventListener("pointerdown", (e) => startHandDrag(e, c, el));
     el.addEventListener("dblclick", () => openCard(c.cardId));
     handEl.appendChild(el);
-  });
+  }
+  layoutHand();
 }
 
 function render() { applyView(); renderGroups(); renderCards(); renderHand(); updateChrome(); }
@@ -317,9 +348,12 @@ function pruneGroups() {
 // A lone card's own 1-member group (reused if it already has one). Powers "outline around lone cards".
 function ensureSoloGroup(c) {
   if (c.group) { const m = membersOf(c.group); if (m.length === 1 && m[0].cardId === c.cardId) return c.group; }
-  const ng = { id: "g-" + CT.uuid(), name: "", seed: hashStr(c.cardId) };
-  state.groups.push(ng); saveGroup(ng); c.group = ng.id; persist(c);
-  return ng.id;
+  // Derive the id from the card (not a random uuid) so two open canvas tabs both ensuring the same
+  // lone card converge on ONE record via upsert instead of each writing a duplicate orphan group.
+  const id = "solo-" + c.cardId;
+  if (!state.groups.some((g) => g.id === id)) { const ng = { id, name: "", seed: hashStr(c.cardId) }; state.groups.push(ng); saveGroup(ng); }
+  c.group = id; persist(c);
+  return id;
 }
 function ensureGroups() {
   if (S.soloGroups) { for (const c of state.cards) if (c.placed && !c.group) ensureSoloGroup(c); }
@@ -337,7 +371,7 @@ function bumpZ(c, el) { c.z = ++state.zmax; if (el) el.style.zIndex = c.z; persi
 function startCardDrag(e, c, el) {
   if (e.button !== 0) { if (e.button === 2) return; return; }
   e.stopPropagation();
-  closeMenu();
+  closeMenu(); hideUrlPop();
   el.setPointerCapture(e.pointerId);
   bumpZ(c, el);
   const multi = (e.shiftKey || e.ctrlKey || e.metaKey);
@@ -351,7 +385,7 @@ function startCardDrag(e, c, el) {
   el.classList.add("dragging"); busy = true;
 
   const move = (ev) => {
-    if (!moved && Math.hypot(ev.clientX - downX, ev.clientY - downY) > 4) moved = true;
+    if (!moved && Math.hypot(ev.clientX - downX, ev.clientY - downY) > 4) { moved = true; hideUrlPop(); }
     const w = toWorld(ev.clientX, ev.clientY);
     const dx = w.x - start.x, dy = w.y - start.y;
     for (const s of starts) {
@@ -359,12 +393,16 @@ function startCardDrag(e, c, el) {
       const ke = cardsEl.querySelector(`[data-id="${s.k.cardId}"]`);
       if (ke) { ke.style.left = s.k.x + "px"; ke.style.top = s.k.y + "px"; }
     }
-    if (!movingMany) {
-      if (S.soloGroups) { c.group = liveGroup(c) || ensureSoloGroup(c); hidePreview(); }   // outline always follows the lone card
-      else {
-        c.group = liveGroup(c);
-        if (c.group) hidePreview();
-        else { const p = newGroupPartner(c); p ? showPreview([c, p]) : hidePreview(); }
+    if (overHand(ev.clientX, ev.clientY)) { hidePreview(); showHandPreview(group); }   // headed for the hand → show it docking there
+    else {
+      hideHandPreview();
+      if (!movingMany) {
+        if (S.soloGroups) { c.group = liveGroup(c) || ensureSoloGroup(c); hidePreview(); }   // outline always follows the lone card
+        else {
+          c.group = liveGroup(c);
+          if (c.group) hidePreview();
+          else { const p = newGroupPartner(c); p ? showPreview([c, p]) : hidePreview(); }
+        }
       }
     }
     renderGroups();
@@ -410,7 +448,7 @@ function startGroupDrag(e, g) {                       // initiated by pressing o
   const up = () => {
     try { tableEl.releasePointerCapture(e.pointerId); } catch (er) {}
     tableEl.removeEventListener("pointermove", move); tableEl.removeEventListener("pointerup", up); tableEl.removeEventListener("pointercancel", up);
-    busy = false; tableEl.style.cursor = ""; orig.forEach((o) => persist(o.c)); afterDrag();
+    busy = false; tableEl.style.cursor = ""; orig.forEach((o) => persist(o.c)); render(); afterDrag();
   };
   tableEl.addEventListener("pointermove", move); tableEl.addEventListener("pointerup", up); tableEl.addEventListener("pointercancel", up);
 }
@@ -453,41 +491,66 @@ tableEl.addEventListener("pointermove", (e) => {
 });
 
 // ---------------- hand dragging ----------------
+// A press alone must NOT move the card (so a click just rests, and a double-click can open) — the
+// floater is only spawned once the pointer travels past a small threshold, i.e. a genuine drag.
 function startHandDrag(e, c, el) {
   if (e.button !== 0) return;
-  bumpZ(c); busy = true;
-  const floater = buildCard(c, false); floater.classList.add("dragging");
-  floater.style.transform = "rotate(0deg)"; cardsEl.appendChild(floater); floater.setPointerCapture(e.pointerId);
+  el.setPointerCapture(e.pointerId);   // capture up front so even a fast flick lands its first move (capture doesn't change the click/dblclick target)
+  const downX = e.clientX, downY = e.clientY;
+  let floater = null, moved = false;
+  const begin = () => {
+    moved = true; busy = true; hideUrlPop(); handHover(null);
+    bumpZ(c);
+    floater = buildCard(c, false); floater.classList.add("dragging");
+    floater.style.transform = "rotate(0deg)"; cardsEl.appendChild(floater);
+    el.style.visibility = "hidden";   // hide the resting hand card; the floater stands in for it
+  };
   const move = (ev) => {
+    if (!moved) { if (Math.hypot(ev.clientX - downX, ev.clientY - downY) <= 5) return; begin(); }
     const w = toWorld(ev.clientX, ev.clientY); c.x = w.x - CARD_W / 2; c.y = w.y - CARD_H / 2;
     floater.style.left = c.x + "px"; floater.style.top = c.y + "px";
-    const g = liveGroup(c);
-    if (g) showPreview(membersOf(g).concat(c));
-    else { const p = newGroupPartner(c); p ? showPreview([c, p]) : hidePreview(); }
+    if (overHand(ev.clientX, ev.clientY)) { hidePreview(); }   // returning to the hand → the dashed receiving box is the cue (it already has a slot here)
+    else {
+      const g = liveGroup(c);
+      if (g) showPreview(membersOf(g).concat(c));
+      else { const p = newGroupPartner(c); p ? showPreview([c, p]) : hidePreview(); }
+    }
     hotZones(ev.clientX, ev.clientY);
   };
   const drop = (ev) => {
-    try { floater.releasePointerCapture(e.pointerId); } catch (er) {}
-    floater.removeEventListener("pointermove", move); floater.removeEventListener("pointerup", drop); floater.removeEventListener("pointercancel", drop);
+    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", drop); el.removeEventListener("pointercancel", drop);
+    try { el.releasePointerCapture(e.pointerId); } catch (er) {}
+    if (!moved) return;                              // a click (or the first of a double-click): leave it in the hand
     clearZones(); hidePreview(); busy = false;
-    if (ev.type === "pointercancel") { floater.remove(); render(); afterDrag(); return; }   // canceled → card stays in the hand (never placed)
+    if (floater) floater.remove(); el.style.visibility = "";
+    if (ev.type === "pointercancel") { render(); afterDrag(); return; }   // canceled → card stays in the hand (never placed)
     if (overTrash(ev.clientX, ev.clientY)) { removeCards([c.cardId]); afterDrag(); return; }
     if (overHand(ev.clientX, ev.clientY)) { render(); afterDrag(); return; }   // stays in hand
     c.placed = true; finalizeGroup(c); persist(c); render(); afterDrag();
   };
-  floater.addEventListener("pointermove", move); floater.addEventListener("pointerup", drop); floater.addEventListener("pointercancel", drop);
+  el.addEventListener("pointermove", move); el.addEventListener("pointerup", drop); el.addEventListener("pointercancel", drop);
 }
 
 // ---------------- drop zones ----------------
 function overTrash(x, y) { const r = trashEl.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
-function overHand(x, y) { return y > innerHeight - HAND_ZONE_H; }
+// The hand's real footprint (centered, sized to the resting cards) — you must aim INTO it, not just
+// graze the bottom edge. Width comes from the live hand count (not getBoundingClientRect) so the
+// ghost preview, which transiently widens #hand, can't feed back into the hit-test and cause flicker.
+function handDropRect() {
+  const n = handCards().length;
+  const w = n ? HAND_W + (n - 1) * HAND_STEP : 0;
+  const halfW = Math.max(w, 260) / 2 + 56;
+  const cx = innerWidth / 2;
+  return { left: cx - halfW, right: cx + halfW, top: innerHeight - HAND_ZONE_H, bottom: innerHeight + 60 };
+}
+function overHand(x, y) { const r = handDropRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
 function hotZones(x, y) { const t = overTrash(x, y); trashEl.classList.toggle("hot", t); handEl.classList.toggle("receiving", !t && overHand(x, y)); }
-function clearZones() { trashEl.classList.remove("hot"); handEl.classList.remove("receiving"); }
+function clearZones() { trashEl.classList.remove("hot"); handEl.classList.remove("receiving"); hideHandPreview(); }
 
 // ---------------- commands ----------------
 function openCard(id) { send({ type: CT.MSG.OPEN, cardId: id }); }
 async function removeCards(ids) {
-  busy = true;
+  busy = true; hideUrlPop();   // the hovered card is about to vanish without a pointerleave
   const snaps = [];
   for (const id of ids) {
     const c = card(id); if (!c) continue;
@@ -529,6 +592,27 @@ function showToast(msg, withUndo) {
 }
 function hideToast() { toastEl.classList.remove("show"); }
 
+// ---------------- url hover popup ----------------
+const urlPopEl = $("urlpop");
+let urlPopT = null;
+function scheduleUrlPop(el, url) {
+  clearTimeout(urlPopT);
+  if (busy || !url) return;
+  urlPopT = setTimeout(() => {
+    if (busy) return;
+    urlPopEl.textContent = url;
+    urlPopEl.style.display = "block";                 // display first so offsetWidth/Height measure
+    urlPopEl.classList.add("show");
+    const r = el.getBoundingClientRect();
+    let left = r.left + r.width / 2 - urlPopEl.offsetWidth / 2;
+    left = Math.max(8, Math.min(left, innerWidth - urlPopEl.offsetWidth - 8));
+    let top = r.top - urlPopEl.offsetHeight - 8;
+    if (top < 8) top = r.bottom + 8;                  // no room above (e.g. a hand card) → drop below
+    urlPopEl.style.left = left + "px"; urlPopEl.style.top = top + "px";
+  }, 320);
+}
+function hideUrlPop() { clearTimeout(urlPopT); urlPopEl.classList.remove("show"); urlPopEl.style.display = "none"; }
+
 // ---------------- context menu ----------------
 function openMenu(x, y, c) {
   const ids = selection.size ? [...selection] : (c ? [c.cardId] : []);
@@ -559,7 +643,7 @@ function closeMenu() { menuEl.classList.remove("open"); }
 
 // ---------------- pan / zoom / canvas ----------------
 tableEl.addEventListener("pointerdown", (e) => {
-  closeMenu();
+  closeMenu(); hideUrlPop();
   if (e.button !== 0 || e.target.closest(".card") || e.target.closest(".group-label")) return;
   const gNear = nearestGroupOutline(toWorld(e.clientX, e.clientY));
   if (gNear) { startGroupDrag(e, gNear); return; }     // press on/near an outline grabs the group
@@ -572,7 +656,7 @@ tableEl.addEventListener("pointerdown", (e) => {
 });
 tableEl.addEventListener("contextmenu", (e) => { if (e.target.closest(".card")) return; e.preventDefault(); openMenu(e.clientX, e.clientY, null); });
 tableEl.addEventListener("wheel", (e) => {
-  e.preventDefault();
+  e.preventDefault(); hideUrlPop();
   const z = Math.max(0.2, Math.min(3, state.view.zoom * Math.exp(-e.deltaY * 0.0015)));
   const w = toWorld(e.clientX, e.clientY);
   state.view.x = e.clientX - w.x * z; state.view.y = e.clientY - w.y * z; state.view.zoom = z;
@@ -605,11 +689,117 @@ let searchT = null;
 searchEl.addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(() => { filter = searchEl.value.trim(); renderCards(); renderGroups(); }, 120); });
 
 // ---------------- settings overlay ----------------
+// A broad, OS-fallback-stacked font catalogue grouped by feel. Values are full font-family stacks
+// (stored verbatim in settings); each <option> is rendered in its own font so the menu self-previews.
+const FONTS = [
+  ["Handwriting", [
+    ["Caveat", '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive'],
+    ["Bradley Hand", '"Bradley Hand","Segoe Print",cursive'],
+    ["Segoe Print", '"Segoe Print","Bradley Hand",cursive'],
+    ["Ink Free", '"Ink Free","Segoe Print",cursive'],
+    ["Marker Felt", '"Marker Felt","Comic Sans MS",cursive'],
+    ["Chalkboard", '"Chalkboard SE","Chalkboard","Comic Sans MS",cursive'],
+    ["Comic", '"Comic Sans MS","Comic Neue",cursive'],
+    ["Brush Script", '"Brush Script MT","Segoe Script",cursive'],
+  ]],
+  ["Sans-serif", [
+    ["System UI", 'ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif'],
+    ["Helvetica / Arial", 'Helvetica,Arial,"Helvetica Neue",sans-serif'],
+    ["Segoe UI", '"Segoe UI",system-ui,sans-serif'],
+    ["Verdana", 'Verdana,Geneva,sans-serif'],
+    ["Tahoma", 'Tahoma,Geneva,sans-serif'],
+    ["Trebuchet MS", '"Trebuchet MS",ui-rounded,"Segoe UI",sans-serif'],
+    ["Calibri", 'Calibri,"Segoe UI",sans-serif'],
+    ["Gill Sans", '"Gill Sans","Gill Sans MT",Calibri,sans-serif'],
+    ["Futura", 'Futura,"Trebuchet MS",sans-serif'],
+    ["Avenir", 'Avenir,"Avenir Next",Montserrat,sans-serif'],
+    ["Optima", 'Optima,Candara,"Segoe UI",sans-serif'],
+  ]],
+  ["Serif", [
+    ["Georgia", 'Georgia,"Times New Roman",serif'],
+    ["Times New Roman", '"Times New Roman",Times,serif'],
+    ["Garamond", 'Garamond,"EB Garamond",Georgia,serif'],
+    ["Palatino", '"Palatino Linotype",Palatino,"Book Antiqua",serif'],
+    ["Cambria", 'Cambria,Georgia,serif'],
+    ["Baskerville", 'Baskerville,"Baskerville Old Face",Georgia,serif'],
+    ["Didot", 'Didot,"Bodoni MT",Georgia,serif'],
+  ]],
+  ["Monospace", [
+    ["System Mono", 'ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace'],
+    ["Consolas", 'Consolas,"Cascadia Code",monospace'],
+    ["Courier", '"Courier New",Courier,monospace'],
+    ["Menlo / Monaco", 'Menlo,Monaco,Consolas,monospace'],
+  ]],
+  ["Display", [
+    ["Impact", 'Impact,Haettenschweiler,"Arial Narrow Bold",sans-serif'],
+    ["Copperplate", 'Copperplate,"Copperplate Gothic Light",serif'],
+    ["Bahnschrift", 'Bahnschrift,"DIN Alternate","Segoe UI",sans-serif'],
+    ["Papyrus", 'Papyrus,fantasy'],
+  ]],
+];
+function buildFontOptions() {
+  const sel = $("s-font"); sel.replaceChildren();
+  for (const [cat, fonts] of FONTS) {
+    const og = document.createElement("optgroup"); og.label = cat;
+    for (const [label, stack] of fonts) {
+      const o = document.createElement("option"); o.value = stack; o.textContent = label;
+      o.style.fontFamily = stack; o.style.fontSize = "15px";
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+}
+function setFontValue(stack) {
+  const sel = $("s-font");
+  if (![...sel.options].some((o) => o.value === stack)) {   // a font from an old/imported board that isn't catalogued
+    const o = document.createElement("option"); o.value = stack; o.textContent = "Custom"; o.style.fontFamily = stack; sel.appendChild(o);
+  }
+  sel.value = stack;
+}
+// Build the preview through the real card builder so it always matches actual cards. Sample data
+// only; strip the note's contenteditable so the static preview can't be focused/typed into.
+function buildPreviewCard() {
+  let favicon = ""; try { favicon = X.runtime.getURL("icons/icon-48.png"); } catch (e) {}
+  const el = buildCard({
+    cardId: "preview", url: "https://example.com/your/page", title: "cardtable — your tabs as cards",
+    favicon, state: "live", note: "drag me onto the felt", shotUrl: null, x: 0, y: 0, rot: 0, z: 1,
+  }, false);
+  el.id = "s-preview-card";
+  const note = el.querySelector(".note"); if (note) note.removeAttribute("contenteditable");
+  $("s-preview-frame").replaceChildren(el);
+}
+// Live preview card — reflects the unsaved control values so changes are visible before Save.
+function updatePreview() {
+  const card = $("s-preview-card"); if (!card) return;
+  const cw = +$("s-cardw").value || CT.DEFAULTS.cardWidth;
+  const size = +$("s-size").value || CT.DEFAULTS.labelSize;
+  const lines = Math.max(1, Math.min(5, +$("s-titlelines").value || 1));
+  card.style.setProperty("--card-w", cw + "px");
+  card.style.setProperty("--label-font", $("s-font").value || CT.DEFAULTS.labelFont);
+  card.style.setProperty("--label-size", size + "px");
+  card.style.setProperty("--title-lines", lines);
+  card.style.transform = `scale(${Math.max(0.5, Math.min(1.08, 200 / cw))})`;
+  const paper = $("s-theme").value === "paper", felt = $("s-felt").value || CT.DEFAULTS.feltColor;
+  $("s-preview-frame").style.background = paper
+    ? "radial-gradient(135% 135% at 50% -10%, #e9e6dc, #d8d4c6)"
+    : `radial-gradient(135% 135% at 50% -10%, ${felt}, #181b21)`;   // #181b21 = --table-bg-2 default, matching the real table
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  set("s-cardw-val", cw + "px"); set("s-size-val", size + "px"); set("s-quality-val", (+$("s-quality").value).toFixed(2));
+}
+function wireSettings() {
+  for (const id of ["s-theme", "s-felt", "s-cardw", "s-font", "s-size", "s-titlelines", "s-quality"]) {
+    $(id).addEventListener("input", updatePreview);
+  }
+}
 function openSettings() {
+  buildFontOptions();
   $("s-theme").value = S.theme; $("s-felt").value = S.feltColor; $("s-cardw").value = S.cardWidth;
-  $("s-font").value = S.labelFont; $("s-titlelines").value = S.titleLines || 1; $("s-size").value = S.labelSize || 18; $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
+  setFontValue(S.labelFont || CT.DEFAULTS.labelFont);
+  $("s-titlelines").value = S.titleLines || 1; $("s-size").value = S.labelSize || 18; $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
   $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
   $("s-authhosts").value = (S.authHosts || []).join("\n");
+  buildPreviewCard();
+  updatePreview();
   $("settings").classList.add("open");
 }
 function closeSettings() { $("settings").classList.remove("open"); }
@@ -621,7 +811,7 @@ $("s-save").addEventListener("click", async () => {
   S.cardWidth = +$("s-cardw").value; S.labelFont = $("s-font").value || CT.DEFAULTS.labelFont;
   S.shotQuality = +$("s-quality").value; S.maxLiveTabs = Math.max(1, +$("s-maxlive").value || 1);
   S.titleLines = Math.max(1, Math.min(5, +$("s-titlelines").value || 1));
-  S.labelSize = Math.max(10, Math.min(36, +$("s-size").value || 18));
+  S.labelSize = Math.max(11, Math.min(34, +$("s-size").value || 18));
   S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
   S.authHosts = $("s-authhosts").value.split("\n").map((s) => s.trim()).filter(Boolean);
   await saveSettings(); applyTheme(); ensureGroups(); closeSettings(); render();
@@ -675,6 +865,14 @@ X.runtime.onMessage.addListener((msg) => {
   if (msg.type === CT.MSG.CHANGED) scheduleReload();
   else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || busy) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.replaceChildren(snapImg(u)); }); }   // document-wide: also updates cards in the hand
 });
+// Settings can change in another canvas tab (or be imported elsewhere) — keep this tab's live copy,
+// theme, and groups in sync. background.js has its own storage.onChanged; this is the page's.
+X.storage.onChanged.addListener((ch, area) => {
+  if (area !== "local" || !ch.settings) return;
+  S = { ...CT.DEFAULTS, ...(ch.settings.newValue || {}) };
+  applyTheme();        // immediate visual sync (theme / font / size / width)
+  scheduleReload();    // membership-affecting changes (soloGroups) reconcile from fresh DB state, not stale in-memory groups
+});
 // Failsafe: a drag can't outlive the canvas tab being hidden (opening a card switches tabs). If a
 // pointerup/pointercancel is ever missed, `busy` would latch true and silently freeze every screenshot
 // update until reload. Release the latch on hide; on return, pull in anything that changed while away.
@@ -685,6 +883,7 @@ document.addEventListener("visibilitychange", () => {
 
 // ---------------- boot ----------------
 (async function boot() {
+  wireSettings();
   await loadSettings();
   await loadAll();
   render();
