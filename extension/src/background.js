@@ -115,6 +115,13 @@ async function captureTab(tab) {
   const now = Date.now();
   if (now - (lastCap.get(tab.id) || 0) < MIN_CAP_MS) return;
   lastCap.set(tab.id, now);
+  // Firefox MV3 treats manifest host_permissions as optional, so on a fresh install <all_urls> is
+  // ungranted and captureVisibleTab is simply absent (calling it throws "not a function"). Detect
+  // that distinctly so the log is actionable; the canvas surfaces an "Enable screenshots" prompt.
+  if (typeof X.tabs.captureVisibleTab !== "function") {
+    logCapErr("capture", tab, new Error("no page access — enable screenshots in cardtable Settings (Firefox grants site access on request, not at install)"));
+    return;
+  }
   let dataUrl;
   try { dataUrl = await X.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: Math.round((settings.shotQuality || 0.7) * 100) }); }
   catch (e) { logCapErr("capture", tab, e); return; }   // often benign (tab not visible/focused); a permission error surfaces here too
@@ -333,3 +340,13 @@ X.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 if (X.commands) X.commands.onCommand.addListener((cmd) => { if (cmd === "focus-canvas") focusCanvas(); });
 if (X.action) X.action.onClicked.addListener(() => focusCanvas());
+// When the user grants <all_urls> at runtime (Firefox; see Settings → Screenshots), captureVisibleTab
+// becomes callable. Shoot each window's active tab right away so thumbnails appear without first
+// having to switch tabs (onActivated/onUpdated would otherwise be the only triggers).
+if (X.permissions && X.permissions.onAdded) {
+  X.permissions.onAdded.addListener(async (perms) => {
+    if (!perms || !(perms.origins || []).length) return;
+    try { for (const t of await X.tabs.query({ active: true })) if (t && !isCanvas(t.url)) scheduleCapture(t); }
+    catch (e) {}
+  });
+}

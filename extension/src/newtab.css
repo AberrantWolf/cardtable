@@ -1,3 +1,15 @@
+/* Bundled fonts (packaged under fonts/) so the title + group defaults render identically on every
+   OS — without them, Linux/macOS fall back to a generic and the handwriting picker looks inert.
+   Caveat: SIL OFL 1.1. Permanent Marker: Apache 2.0. See fonts/README.md. The static instances are
+   declared across a weight range so default-weight (400) text still uses them rather than synthesizing. */
+@font-face {
+  font-family: "Caveat"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url("fonts/caveat.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Permanent Marker"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url("fonts/permanent-marker.woff2") format("woff2");
+}
 :root {
   --table-bg: #262a32;
   --table-bg-2: #181b21;
@@ -14,7 +26,7 @@
   --note-size: 11.5px;
   --note-font: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --group-size: 27px;
-  --group-font: "Caveat", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  --group-font: "Permanent Marker", "Marker Felt", "Comic Sans MS", cursive;
   --lift: 0 6px 16px rgba(0, 0, 0, .35), 0 2px 4px rgba(0, 0, 0, .25);
   --lift-hi: 0 14px 30px rgba(0, 0, 0, .45), 0 4px 8px rgba(0, 0, 0, .3);
   --accent: #5b9dd9;
@@ -105,6 +117,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 #bar button { font: inherit; font-size: 13px; color: #eaedf1; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .14); padding: 6px 11px; border-radius: 8px; cursor: pointer; }   /* bar is always dark → keep text light in both themes */
 #bar button:hover { background: rgba(255, 255, 255, .18); }
 #count { font-size: 12px; color: rgba(255, 255, 255, .5); padding: 0 2px; }
+
+/* ---- host-access prompt (Firefox grants <all_urls> at runtime, not install) ---- */
+#perm-banner { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 880; display: flex; align-items: center; gap: 12px; max-width: 92vw; padding: 9px 12px; border-radius: 11px; background: rgba(32, 36, 43, .92); border: 1px solid rgba(224, 177, 90, .55); backdrop-filter: blur(8px); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); font-size: 13px; color: #eaedf1; }
+#perm-banner.hide { display: none; }
+#perm-banner button { font: inherit; font-size: 13px; border-radius: 8px; cursor: pointer; }
+#perm-banner #perm-grant { padding: 6px 12px; color: #fff; background: var(--accent); border: 1px solid var(--accent); }
+#perm-banner #perm-dismiss { padding: 6px 8px; color: rgba(255, 255, 255, .55); background: none; border: none; }
+.s-grant { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: #fff; background: var(--accent); border: 1px solid var(--accent); }
+#s-perm-row.hide { display: none; }
 
 #trash { position: fixed; left: 22px; bottom: 22px; width: 66px; height: 66px; z-index: 850; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: rgba(0, 0, 0, .28); border: 2px dashed rgba(238, 242, 239, .35); opacity: .45; transition: all .14s ease; }
 #trash.hot { opacity: 1; transform: scale(1.12); background: rgba(216, 66, 59, .35); border-color: #d8423b; }

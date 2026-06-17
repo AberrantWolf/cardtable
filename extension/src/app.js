@@ -144,6 +144,11 @@ function placeholderLetter(c) { try { return (new URL(c.url).hostname.replace(/^
 // (titles, favicons) can never be interpreted as markup on this privileged page.
 function elem(tag, className, props) { const e = document.createElement(tag); if (className) e.className = className; if (props) Object.assign(e, props); return e; }
 function snapImg(url) { return elem("img", "snap", { src: url, alt: "", draggable: false }); }
+// This new-tab page is a secure (moz-/chrome-extension:) context, so an http favicon gets
+// auto-upgraded by the browser — which spams a "Upgrading insecure request" CSP warning per card.
+// Request https ourselves so there's nothing to upgrade; if the host has no https icon the load
+// fails and the existing onerror just hides it (same outcome the auto-upgrade would reach, quietly).
+function httpsFavicon(url) { return url && url.startsWith("http://") ? "https://" + url.slice(7) : url; }
 function buildCard(c, inHand) {
   const el = elem("div", "card"); el.dataset.id = c.cardId;
   if (!inHand) {
@@ -154,8 +159,8 @@ function buildCard(c, inHand) {
   const shot = elem("div", "shot");
   shot.append(c.shotUrl ? snapImg(c.shotUrl) : elem("div", "ph", { textContent: placeholderLetter(c) }));
   el.append(shot);
-  if (c.favicon) {   // favicon is a corner sticker so the caption can be all title (and it stays legible zoomed out)
-    const fav = elem("img", "fav", { src: c.favicon, alt: "", draggable: false });
+  if (c.favicon && S.showFavicons !== false) {   // favicon is a corner sticker so the caption can be all title (and it stays legible zoomed out)
+    const fav = elem("img", "fav", { src: httpsFavicon(c.favicon), alt: "", draggable: false });
     fav.addEventListener("error", () => { fav.style.display = "none"; });   // inline onerror is blocked by the MV3 page CSP
     el.append(fav);
   }
@@ -759,8 +764,12 @@ searchEl.addEventListener("input", () => { clearTimeout(searchT); searchT = setT
 // A broad, OS-fallback-stacked font catalogue grouped by feel. Values are full font-family stacks
 // (stored verbatim in settings); each <option> is rendered in its own font so the menu self-previews.
 const FONTS = [
-  ["Handwriting", [
+  // Packaged with the extension (see newtab.css @font-face) — these always render, on every OS.
+  ["Bundled", [
     ["Caveat", '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive'],
+    ["Permanent Marker", '"Permanent Marker","Marker Felt","Comic Sans MS",cursive'],
+  ]],
+  ["Handwriting", [
     ["Bradley Hand", '"Bradley Hand","Segoe Print",cursive'],
     ["Segoe Print", '"Segoe Print","Bradley Hand",cursive'],
     ["Ink Free", '"Ink Free","Segoe Print",cursive'],
@@ -804,11 +813,41 @@ const FONTS = [
     ["Papyrus", 'Papyrus,fantasy'],
   ]],
 ];
+// Only offer fonts the system can actually render. An option whose primary family isn't installed
+// would silently fall back to a generic — and since every absent handwriting font collapses to the
+// same `cursive`, the picker looks inert (you change the font and nothing moves). We probe each
+// option's primary family with the canvas-metrics trick: a family that resolves to something other
+// than the generic baseline is installed. Bundled families always render (skip the probe, and the
+// async webfont load can't race us); generic-led stacks (System UI/Mono) are the OS default.
+const STACK_LABEL = new Map();
+for (const [, fonts] of FONTS) for (const [label, stack] of fonts) STACK_LABEL.set(stack, label);
+const BUNDLED_FAMILIES = new Set(["Caveat", "Permanent Marker"]);
+const GENERIC_FAMILIES = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy",
+  "system-ui", "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded", "math", "emoji"]);
+const _fontCtx = document.createElement("canvas").getContext("2d");
+const _fontProbe = "mmmmmmmmmmlli WwQg019", _fontPx = "72px", _fontBases = ["monospace", "serif", "sans-serif"];
+const _fontAvail = new Map();
+let _fontBaseW = null;
+function fontInstalled(family) {
+  if (_fontAvail.has(family)) return _fontAvail.get(family);
+  if (!_fontBaseW) { _fontBaseW = {}; for (const b of _fontBases) { _fontCtx.font = `${_fontPx} ${b}`; _fontBaseW[b] = _fontCtx.measureText(_fontProbe).width; } }
+  let ok = false;
+  for (const b of _fontBases) { _fontCtx.font = `${_fontPx} "${family}",${b}`; if (_fontCtx.measureText(_fontProbe).width !== _fontBaseW[b]) { ok = true; break; } }
+  _fontAvail.set(family, ok);
+  return ok;
+}
+function stackAvailable(stack) {
+  const first = stack.split(",")[0].trim().replace(/^["']|["']$/g, "");
+  if (GENERIC_FAMILIES.has(first.toLowerCase()) || BUNDLED_FAMILIES.has(first)) return true;
+  return fontInstalled(first);
+}
 function buildFontOptions(sel) {
   sel.replaceChildren();
   for (const [cat, fonts] of FONTS) {
+    const avail = fonts.filter(([, stack]) => stackAvailable(stack));
+    if (!avail.length) continue;   // whole category missing on this OS — drop the empty optgroup
     const og = document.createElement("optgroup"); og.label = cat;
-    for (const [label, stack] of fonts) {
+    for (const [label, stack] of avail) {
       const o = document.createElement("option"); o.value = stack; o.textContent = label;
       o.style.fontFamily = stack; o.style.fontSize = "15px";
       og.appendChild(o);
@@ -817,8 +856,8 @@ function buildFontOptions(sel) {
   }
 }
 function setFontValue(sel, stack) {
-  if (![...sel.options].some((o) => o.value === stack)) {   // a font from an old/imported board that isn't catalogued
-    const o = document.createElement("option"); o.value = stack; o.textContent = "Custom"; o.style.fontFamily = stack; sel.appendChild(o);
+  if (![...sel.options].some((o) => o.value === stack)) {   // current value was filtered out (not installed here), or an old/imported board's font
+    const o = document.createElement("option"); o.value = stack; o.textContent = STACK_LABEL.get(stack) || "Custom"; o.style.fontFamily = stack; sel.appendChild(o);
   }
   sel.value = stack;
 }
@@ -887,8 +926,10 @@ function openSettings() {
   $("s-notesize").value = S.noteSize || CT.DEFAULTS.noteSize; $("s-groupsize").value = S.groupSize || CT.DEFAULTS.groupSize;
   $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
   $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
+  $("s-favicons").checked = S.showFavicons !== false;
   $("s-authhosts").value = (S.authHosts || []).join("\n");
   syncGuardDep();
+  refreshPermUI();
   buildPreviewCard();
   updatePreview();
   $("settings").classList.add("open");
@@ -908,6 +949,7 @@ $("s-save").addEventListener("click", async () => {
   S.groupFont = $("s-groupfont").value || CT.DEFAULTS.groupFont;
   S.groupSize = Math.max(14, Math.min(48, +$("s-groupsize").value || CT.DEFAULTS.groupSize));
   S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
+  S.showFavicons = $("s-favicons").checked;
   S.authHosts = $("s-authhosts").value.split("\n").map((s) => s.trim()).filter(Boolean);
   await saveSettings(); applyTheme(); ensureGroups(); closeSettings(); render();
 });
@@ -976,10 +1018,42 @@ document.addEventListener("visibilitychange", () => {
   else { pendingReload = false; scheduleReload(); }
 });
 
+// ---------------- host access (screenshots) ----------------
+// Firefox MV3 treats manifest host_permissions as optional: on a fresh install <all_urls> is
+// ungranted, so background's tabs.captureVisibleTab is absent and nothing is ever captured.
+// permissions.request must run from a user gesture, so we offer a dismissible banner and a
+// Settings button and grant from the click. Chrome grants <all_urls> at install, so contains()
+// is true there and none of this UI ever appears.
+const ALL_URLS = { origins: ["<all_urls>"] };
+async function hostAccessGranted() {
+  if (!X.permissions || !X.permissions.contains) return true;
+  try { return await X.permissions.contains(ALL_URLS); } catch (e) { return true; }
+}
+async function refreshPermUI() {
+  const granted = await hostAccessGranted();
+  $("s-perm-row").classList.toggle("hide", granted);
+  let dismissed = false;
+  try { dismissed = !!(await X.storage.local.get("permBannerDismissed")).permBannerDismissed; } catch (e) {}
+  $("perm-banner").classList.toggle("hide", granted || dismissed);
+}
+async function grantHostAccess() {
+  let ok = false;
+  try { ok = await X.permissions.request(ALL_URLS); } catch (e) {}
+  if (ok) showToast("Screenshots enabled — thumbnails will appear as you browse.", false);
+  await refreshPermUI();
+}
+$("perm-grant").addEventListener("click", grantHostAccess);
+$("s-perm-grant").addEventListener("click", grantHostAccess);
+$("perm-dismiss").addEventListener("click", async () => {
+  $("perm-banner").classList.add("hide");
+  try { await X.storage.local.set({ permBannerDismissed: true }); } catch (e) {}
+});
+
 // ---------------- boot ----------------
 (async function boot() {
   wireSettings();
   await loadSettings();
   await loadAll();
   render();
+  refreshPermUI();
 })();

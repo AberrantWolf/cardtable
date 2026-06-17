@@ -30,6 +30,12 @@
     <button id="btn-settings" title="Settings">⚙</button>
   </div>
 
+  <div id="perm-banner" class="hide">
+    <span>Screenshots are off — Firefox needs your OK before cardtable can capture page thumbnails.</span>
+    <button id="perm-grant" class="primary">Enable screenshots</button>
+    <button id="perm-dismiss" title="Dismiss">✕</button>
+  </div>
+
   <div id="trash" title="Drop a card here to close it for good">🗑</div>
   <div id="hand"></div>
 
@@ -68,8 +74,10 @@
           <div class="row"><label>Keep this many tabs awake</label><input id="s-maxlive" type="number" min="1" max="20" /></div>
           <div class="row"><label>New tabs land in the hand</label><input id="s-hand" type="checkbox" /></div>
           <div class="row"><label>Draw a group around lone cards</label><input id="s-solo" type="checkbox" /></div>
+          <div class="row"><label>Show site favicons</label><input id="s-favicons" type="checkbox" /></div>
           <div class="row"><label>Reduce motion</label><input id="s-reduce" type="checkbox" /></div>
           <div class="row"><label>Screenshot quality</label><span class="s-field"><input id="s-quality" type="range" min="0.3" max="0.95" step="0.05" /><span class="s-val" id="s-quality-val"></span></span></div>
+          <div class="row hide" id="s-perm-row"><label>Screenshots<div class="hint">Firefox grants page access on request, not at install. Without it, cardtable can't capture thumbnails.</div></label><button id="s-perm-grant" class="s-grant">Enable</button></div>
 
           <div class="s-section">Experimental</div>
           <p class="s-note"><strong>SSO deep-link restore.</strong> Reopening a card that lives behind single sign-on often dumps you on the app's home page instead of the page you saved. With this on, cardtable remembers the page you meant to open and — once it sees the tab bounce through a known login host and return to the <em>same site</em> — finishes the trip for you. It only ever redirects within that one site, only right after a login bounce, and gives up after 90&nbsp;seconds. If you don't use SSO apps, leave it off.</p>

@@ -35,13 +35,14 @@
       noteSize: 11.5,                 // card note
       noteFont: 'ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
       groupSize: 27,                  // group label
-      groupFont: '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive',
+      groupFont: '"Permanent Marker","Marker Felt","Comic Sans MS",cursive',   // bundled (Apache 2.0)
       shotQuality: 0.7,
       shotMaxWidth: 480,
       captureIntervalMs: 6000,
       maxLiveTabs: 1,                 // sleep policy knob; raise (or add tiering) later
       handOnNewTab: true,
       soloGroups: false,
+      showFavicons: true,             // off = don't render (or fetch) per-card site favicons
       reducedMotion: false,
       deepLinkGuard: false,           // experimental SSO deep-link restore — opt-in (see Settings)
       // substring/suffix matches against a navigation hostname; user-editable in Settings.
