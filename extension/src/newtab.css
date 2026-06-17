@@ -195,7 +195,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .s-preview { flex: 0 0 232px; min-width: 0; position: sticky; top: 0; }
 .s-preview-frame { position: relative; height: 304px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); background: radial-gradient(135% 135% at 50% -10%, #262a32, #181b21); }
 .s-preview-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.s-preview-frame .card { position: relative; cursor: default; pointer-events: none; transform-origin: center; box-shadow: var(--lift); }
+/* flex-shrink:0 so a card wider than the stage keeps its true --card-w (the fixed scale set in
+   updatePreview handles fitting). Without it the flex stage squeezes the layout width back to ~230px,
+   so wider settings stop reading as wider in the preview. */
+.s-preview-frame .card { position: relative; flex-shrink: 0; cursor: default; pointer-events: none; transform-origin: center; box-shadow: var(--lift); }
 .s-preview-glabel { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); max-width: 90%; font-family: var(--group-font); font-size: var(--group-size); line-height: 1.1; color: var(--chalk); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, .3); pointer-events: none; z-index: 2; }
 .s-preview-cap { text-align: center; font-size: 11px; color: rgba(255, 255, 255, .45); margin-top: 9px; }
 @media (max-width: 640px) {

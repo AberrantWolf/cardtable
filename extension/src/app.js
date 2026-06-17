@@ -887,7 +887,11 @@ function updatePreview() {
   card.style.setProperty("--title-lines", lines);
   card.style.setProperty("--note-font", $("s-notefont").value || CT.DEFAULTS.noteFont);
   card.style.setProperty("--note-size", noteSize + "px");
-  card.style.transform = `scale(${Math.max(0.5, Math.min(1.08, 200 / cw))})`;   // stage flex-centres it
+  // Fixed "zoom" into the table (not a function of cw) so a wider card reads as wider, with text
+  // holding its apparent size — matching the real canvas. Sized so the widest slider value still
+  // fits the preview frame; the stage flex-centres it.
+  const cwMax = +$("s-cardw").max || cw;
+  card.style.transform = `scale(${Math.min(1, 200 / cwMax)})`;
   const paper = $("s-theme").value === "paper", felt = $("s-felt").value || CT.DEFAULTS.feltColor;
   $("s-preview-frame").style.background = paper
     ? "radial-gradient(135% 135% at 50% -10%, #e9e6dc, #d8d4c6)"
