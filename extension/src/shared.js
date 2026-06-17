@@ -30,8 +30,12 @@
       feltColor: "#262a32",
       cardWidth: 230,
       titleLines: 1,
-      labelSize: 18,
+      labelSize: 18,                  // card title
       labelFont: '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive',
+      noteSize: 11.5,                 // card note
+      noteFont: 'ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+      groupSize: 27,                  // group label
+      groupFont: '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive',
       shotQuality: 0.7,
       shotMaxWidth: 480,
       captureIntervalMs: 6000,
@@ -39,7 +43,7 @@
       handOnNewTab: true,
       soloGroups: false,
       reducedMotion: false,
-      deepLinkGuard: true,
+      deepLinkGuard: false,           // experimental SSO deep-link restore — opt-in (see Settings)
       // substring/suffix matches against a navigation hostname; user-editable in Settings.
       authHosts: [
         "login.microsoftonline.com", "login.microsoft.com", "login.live.com",

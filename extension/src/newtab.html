@@ -56,21 +56,33 @@
           <div class="row"><label>Card width</label><span class="s-field"><input id="s-cardw" type="range" min="150" max="340" step="2" /><span class="s-val" id="s-cardw-val"></span></span></div>
 
           <div class="s-section">Typography</div>
-          <div class="row"><label>Label font</label><select id="s-font"></select></div>
-          <div class="row"><label>Label size</label><span class="s-field"><input id="s-size" type="range" min="11" max="34" step="1" /><span class="s-val" id="s-size-val"></span></span></div>
+          <div class="row"><label>Title font</label><select id="s-font" class="s-fontsel"></select></div>
+          <div class="row"><label>Title size</label><span class="s-field"><input id="s-size" type="range" min="11" max="34" step="1" /><span class="s-val" id="s-size-val"></span></span></div>
           <div class="row"><label>Title lines</label><input id="s-titlelines" type="number" min="1" max="5" /></div>
+          <div class="row"><label>Note font</label><select id="s-notefont" class="s-fontsel"></select></div>
+          <div class="row"><label>Note size</label><span class="s-field"><input id="s-notesize" type="range" min="9" max="22" step="0.5" /><span class="s-val" id="s-notesize-val"></span></span></div>
+          <div class="row"><label>Group label font</label><select id="s-groupfont" class="s-fontsel"></select></div>
+          <div class="row"><label>Group label size</label><span class="s-field"><input id="s-groupsize" type="range" min="14" max="48" step="1" /><span class="s-val" id="s-groupsize-val"></span></span></div>
 
           <div class="s-section">Behavior</div>
           <div class="row"><label>Keep this many tabs awake</label><input id="s-maxlive" type="number" min="1" max="20" /></div>
           <div class="row"><label>New tabs land in the hand</label><input id="s-hand" type="checkbox" /></div>
           <div class="row"><label>Draw a group around lone cards</label><input id="s-solo" type="checkbox" /></div>
-          <div class="row"><label>Restore deep link after SSO re-login</label><input id="s-guard" type="checkbox" /></div>
           <div class="row"><label>Reduce motion</label><input id="s-reduce" type="checkbox" /></div>
           <div class="row"><label>Screenshot quality</label><span class="s-field"><input id="s-quality" type="range" min="0.3" max="0.95" step="0.05" /><span class="s-val" id="s-quality-val"></span></span></div>
-          <div class="row" style="align-items:flex-start"><label>SSO / auth hosts<div class="hint">one per line; substring match</div></label><textarea id="s-authhosts"></textarea></div>
+
+          <div class="s-section">Experimental</div>
+          <p class="s-note"><strong>SSO deep-link restore.</strong> Reopening a card that lives behind single sign-on often dumps you on the app's home page instead of the page you saved. With this on, cardtable remembers the page you meant to open and — once it sees the tab bounce through a known login host and return to the <em>same site</em> — finishes the trip for you. It only ever redirects within that one site, only right after a login bounce, and gives up after 90&nbsp;seconds. If you don't use SSO apps, leave it off.</p>
+          <div class="row"><label>Restore deep link after SSO re-login <span class="s-exp">experimental</span></label><input id="s-guard" type="checkbox" /></div>
+          <div class="row s-guard-dep" style="align-items:flex-start"><label>Known login / SSO hosts<div class="hint">one host per line; matched as a substring of the page's hostname</div></label><textarea id="s-authhosts"></textarea></div>
         </div>
         <div class="s-preview">
-          <div class="s-preview-frame" id="s-preview-frame"></div>   <!-- the preview card is built by buildCard() so it can never drift from real cards -->
+          <div class="s-preview-frame" id="s-preview-frame">
+            <div class="s-preview-glabel" id="s-preview-glabel"></div>
+            <!-- stage is absolutely positioned (out of flow) so the preview card, however wide, can
+                 never reflow the panel; the card itself is built by buildCard() so it can't drift -->
+            <div class="s-preview-stage" id="s-preview-stage"></div>
+          </div>
           <div class="s-preview-cap">live preview</div>
         </div>
       </div>

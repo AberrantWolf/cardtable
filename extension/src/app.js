@@ -18,7 +18,11 @@ const selection = new Set();
 const shotUrls = new Map();
 let filter = "";
 let near = null;   // group id whose outline the pointer is hovering near (a press would grab it)
-let busy = false, pendingReload = false;
+// "Interacting" = a pointer drag is in flight, or an async critical section holds a lease. It is a
+// DERIVED predicate, never a hand-set flag — both sources release through guaranteed teardown
+// (AbortController for drags, try/finally for async), so it cannot latch. See the interaction section.
+let activeGesture = null, criticalDepth = 0, pendingReload = false;
+const isInteracting = () => activeGesture !== null || criticalDepth > 0;
 
 // ---------------- helpers ----------------
 const card = (id) => state.cards.find((c) => c.cardId === id);
@@ -45,6 +49,10 @@ function applyTheme() {
   r.style.setProperty("--label-font", S.labelFont || CT.DEFAULTS.labelFont);
   r.style.setProperty("--title-lines", S.titleLines || 1);
   r.style.setProperty("--label-size", (S.labelSize || 18) + "px");
+  r.style.setProperty("--note-font", S.noteFont || CT.DEFAULTS.noteFont);
+  r.style.setProperty("--note-size", (S.noteSize || CT.DEFAULTS.noteSize) + "px");
+  r.style.setProperty("--group-font", S.groupFont || CT.DEFAULTS.groupFont);
+  r.style.setProperty("--group-size", (S.groupSize || CT.DEFAULTS.groupSize) + "px");
   if (S.theme === "paper") r.style.removeProperty("--table-bg");
   else r.style.setProperty("--table-bg", S.feltColor || CT.DEFAULTS.feltColor);
   document.body.classList.toggle("theme-paper", S.theme === "paper");
@@ -366,13 +374,53 @@ function toggleSel(id) { selection.has(id) ? selection.delete(id) : selection.ad
 function clearSel() { if (selection.size) { selection.clear(); reflectSelection(); } }
 function reflectSelection() { cardsEl.querySelectorAll(".card").forEach((el) => el.classList.toggle("selected", selection.has(el.dataset.id))); }
 
+// ---------------- interaction lifecycle (RAII, replaces the old `busy` boolean) ----------------
+// A pointer drag owns an AbortController; every listener it adds uses {signal}, so one abort()
+// removes them all. endGesture() is idempotent and is the ONLY teardown path — reached via the
+// drag's own pointerup/pointercancel, the lostpointercapture safety net, a tab-hide, or the
+// defensive call below. There is no flag to forget, so the interaction state cannot latch.
+function beginGesture(el, pointerId, onTeardown) {
+  endGesture();                                   // never nest: close any prior gesture first
+  const ac = new AbortController();
+  const g = { el, pointerId, ac, onTeardown };
+  activeGesture = g;
+  el.addEventListener("lostpointercapture", () => {        // safety net: capture yanked without an up/cancel
+    if (activeGesture !== g) return;                        // the normal terminal already handled it
+    endGesture(); render(); drainPending();
+  }, { signal: ac.signal });
+  try { el.setPointerCapture(pointerId); } catch (e) {}
+  return ac.signal;
+}
+function endGesture() {                            // teardown only — never renders or drains
+  const g = activeGesture;
+  if (!g) return;
+  activeGesture = null;                            // null FIRST so re-entrant calls (via abort) no-op
+  try { g.onTeardown && g.onTeardown(); }          // gesture-specific visual cleanup
+  finally {
+    try { g.el.releasePointerCapture(g.pointerId); } catch (e) {}
+    g.ac.abort();                                  // removes every listener registered with this signal
+  }
+}
+// Async critical sections (e.g. removeCards) hold a lease for the function's scope; try/finally
+// guarantees release on return AND on throw — the scope-bound RAII analogue of the pointer gesture.
+async function withInteraction(fn) {
+  criticalDepth++;
+  try { return await fn(); }
+  finally { criticalDepth--; drainPending(); }
+}
+// Run a reload that was deferred while interacting — but only once we're fully idle.
+function drainPending() {
+  if (isInteracting() || !pendingReload) return;
+  pendingReload = false;
+  scheduleReload();
+}
+
 // ---------------- card dragging (select / move / open) ----------------
 function bumpZ(c, el) { c.z = ++state.zmax; if (el) el.style.zIndex = c.z; persist(c); }
 function startCardDrag(e, c, el) {
-  if (e.button !== 0) { if (e.button === 2) return; return; }
+  if (e.button !== 0) return;
   e.stopPropagation();
   closeMenu(); hideUrlPop();
-  el.setPointerCapture(e.pointerId);
   bumpZ(c, el);
   const multi = (e.shiftKey || e.ctrlKey || e.metaKey);
   if (multi) toggleSel(c.cardId);
@@ -382,7 +430,8 @@ function startCardDrag(e, c, el) {
   const starts = group.map((k) => ({ k, x: k.x, y: k.y }));
   const start = toWorld(e.clientX, e.clientY);
   const downX = e.clientX, downY = e.clientY; let moved = false;
-  el.classList.add("dragging"); busy = true;
+  el.classList.add("dragging");
+  const signal = beginGesture(el, e.pointerId, () => { el.classList.remove("dragging"); clearZones(); hidePreview(); });
 
   const move = (ev) => {
     if (!moved && Math.hypot(ev.clientX - downX, ev.clientY - downY) > 4) { moved = true; hideUrlPop(); }
@@ -408,34 +457,31 @@ function startCardDrag(e, c, el) {
     renderGroups();
     hotZones(ev.clientX, ev.clientY);
   };
-  const up = (ev) => {
-    try { el.releasePointerCapture(e.pointerId); } catch (er) {} el.classList.remove("dragging");
-    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
-    clearZones(); hidePreview(); busy = false;
-    if (ev.type === "pointercancel") {   // tab hidden mid-drag (e.g. a card opened a page): no real drop — commit positions, never trash/hand
-      if (moved) { if (!movingMany) finalizeGroup(c); group.forEach((k) => persist(k)); }
-      render(); afterDrag(); return;
-    }
-    if (!moved) { afterDrag(); return; }                         // a click: selection already handled
-    if (overTrash(ev.clientX, ev.clientY)) { removeCards(group.map((k) => k.cardId)); afterDrag(); return; }
-    if (overHand(ev.clientX, ev.clientY)) { group.forEach((k) => { k.placed = false; k.group = null; persist(k); }); pruneGroups(); render(); afterDrag(); return; }
-    pushUndoLayouts(group.map((k) => k.cardId), "Move");
-    if (!movingMany) finalizeGroup(c);
-    group.forEach((k) => persist(k));
-    render(); afterDrag();
+  const finish = (ev) => {
+    const wasMoved = moved, cancel = ev.type === "pointercancel";
+    endGesture();                                                // teardown (capture, listeners, dragging class, zones, preview)
+    try {
+      if (cancel) {   // tab hidden mid-drag (e.g. a card opened a page): no real drop — commit positions, never trash/hand
+        if (wasMoved) { if (!movingMany) finalizeGroup(c); group.forEach((k) => persist(k)); }
+        render();
+      } else if (wasMoved) {
+        if (overTrash(ev.clientX, ev.clientY)) removeCards(group.map((k) => k.cardId));
+        else if (overHand(ev.clientX, ev.clientY)) { group.forEach((k) => { k.placed = false; k.group = null; persist(k); }); pruneGroups(); render(); }
+        else { pushUndoLayouts(group.map((k) => k.cardId), "Move"); if (!movingMany) finalizeGroup(c); group.forEach((k) => persist(k)); render(); }
+      }   // (!cancel && !wasMoved) → a click: selection already handled, nothing to commit
+    } finally { drainPending(); }
   };
-  el.addEventListener("pointermove", move);
-  el.addEventListener("pointerup", up);
-  el.addEventListener("pointercancel", up);
+  el.addEventListener("pointermove", move, { signal });
+  el.addEventListener("pointerup", finish, { signal });
+  el.addEventListener("pointercancel", finish, { signal });
 }
-function afterDrag() { if (pendingReload) { pendingReload = false; scheduleReload(); } }
 
 // ---------------- group dragging ----------------
 function startGroupDrag(e, g) {                       // initiated by pressing on/near the outline (no grip)
-  e.stopPropagation(); closeMenu(); setNear(null); busy = true;
-  tableEl.setPointerCapture(e.pointerId);
+  e.stopPropagation(); closeMenu(); setNear(null);
   const start = toWorld(e.clientX, e.clientY);
   const orig = membersOf(g.id).map((c) => ({ c, x: c.x, y: c.y }));
+  const signal = beginGesture(tableEl, e.pointerId, () => { tableEl.style.cursor = ""; });
   const move = (ev) => {
     const w = toWorld(ev.clientX, ev.clientY); const dx = w.x - start.x, dy = w.y - start.y;
     for (const o of orig) {
@@ -445,12 +491,10 @@ function startGroupDrag(e, g) {                       // initiated by pressing o
     }
     renderGroups();
   };
-  const up = () => {
-    try { tableEl.releasePointerCapture(e.pointerId); } catch (er) {}
-    tableEl.removeEventListener("pointermove", move); tableEl.removeEventListener("pointerup", up); tableEl.removeEventListener("pointercancel", up);
-    busy = false; tableEl.style.cursor = ""; orig.forEach((o) => persist(o.c)); render(); afterDrag();
-  };
-  tableEl.addEventListener("pointermove", move); tableEl.addEventListener("pointerup", up); tableEl.addEventListener("pointercancel", up);
+  const finish = () => { endGesture(); try { orig.forEach((o) => persist(o.c)); render(); } finally { drainPending(); } };
+  tableEl.addEventListener("pointermove", move, { signal });
+  tableEl.addEventListener("pointerup", finish, { signal });
+  tableEl.addEventListener("pointercancel", finish, { signal });
 }
 
 // --- group-by-outline: zoom-aware hit-test of the pointer against group outlines ---
@@ -483,7 +527,7 @@ tableEl.addEventListener("pointermove", (e) => {
   hoverEv = e; if (hoverRAF) return;
   hoverRAF = requestAnimationFrame(() => {
     hoverRAF = null;
-    if (busy || tableEl.classList.contains("panning")) return;
+    if (isInteracting() || tableEl.classList.contains("panning")) return;
     if (hoverEv.target.closest(".card") || hoverEv.target.closest(".group-label")) { setNear(null); return; }
     const g = nearestGroupOutline(toWorld(hoverEv.clientX, hoverEv.clientY));
     setNear(g ? g.id : null);
@@ -495,11 +539,16 @@ tableEl.addEventListener("pointermove", (e) => {
 // floater is only spawned once the pointer travels past a small threshold, i.e. a genuine drag.
 function startHandDrag(e, c, el) {
   if (e.button !== 0) return;
-  el.setPointerCapture(e.pointerId);   // capture up front so even a fast flick lands its first move (capture doesn't change the click/dblclick target)
   const downX = e.clientX, downY = e.clientY;
   let floater = null, moved = false;
+  // capture up front so even a fast flick lands its first move (capture doesn't change click/dblclick target)
+  const signal = beginGesture(el, e.pointerId, () => {
+    clearZones(); hidePreview();
+    if (floater) floater.remove();
+    el.style.visibility = "";
+  });
   const begin = () => {
-    moved = true; busy = true; hideUrlPop(); handHover(null);
+    moved = true; hideUrlPop(); handHover(null);
     bumpZ(c);
     floater = buildCard(c, false); floater.classList.add("dragging");
     floater.style.transform = "rotate(0deg)"; cardsEl.appendChild(floater);
@@ -517,18 +566,20 @@ function startHandDrag(e, c, el) {
     }
     hotZones(ev.clientX, ev.clientY);
   };
-  const drop = (ev) => {
-    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", drop); el.removeEventListener("pointercancel", drop);
-    try { el.releasePointerCapture(e.pointerId); } catch (er) {}
-    if (!moved) return;                              // a click (or the first of a double-click): leave it in the hand
-    clearZones(); hidePreview(); busy = false;
-    if (floater) floater.remove(); el.style.visibility = "";
-    if (ev.type === "pointercancel") { render(); afterDrag(); return; }   // canceled → card stays in the hand (never placed)
-    if (overTrash(ev.clientX, ev.clientY)) { removeCards([c.cardId]); afterDrag(); return; }
-    if (overHand(ev.clientX, ev.clientY)) { render(); afterDrag(); return; }   // stays in hand
-    c.placed = true; finalizeGroup(c); persist(c); render(); afterDrag();
+  const finish = (ev) => {
+    const wasMoved = moved, cancel = ev.type === "pointercancel";
+    endGesture();                                                // teardown (capture, listeners, floater, zones, preview)
+    try {
+      if (!wasMoved) { /* a click (or the first of a double-click): leave it in the hand */ }
+      else if (cancel) render();                                 // canceled → card stays in the hand (never placed)
+      else if (overTrash(ev.clientX, ev.clientY)) removeCards([c.cardId]);
+      else if (overHand(ev.clientX, ev.clientY)) render();       // stays in hand
+      else { c.placed = true; finalizeGroup(c); persist(c); render(); }
+    } finally { drainPending(); }
   };
-  el.addEventListener("pointermove", move); el.addEventListener("pointerup", drop); el.addEventListener("pointercancel", drop);
+  el.addEventListener("pointermove", move, { signal });
+  el.addEventListener("pointerup", finish, { signal });
+  el.addEventListener("pointercancel", finish, { signal });
 }
 
 // ---------------- drop zones ----------------
@@ -550,26 +601,42 @@ function clearZones() { trashEl.classList.remove("hot"); handEl.classList.remove
 // ---------------- commands ----------------
 function openCard(id) { send({ type: CT.MSG.OPEN, cardId: id }); }
 async function removeCards(ids) {
-  busy = true; hideUrlPop();   // the hovered card is about to vanish without a pointerleave
-  const snaps = [];
-  for (const id of ids) {
-    const c = card(id); if (!c) continue;
-    const tabRec = await DBP.get(CT.STORES.tabs, id).catch(() => null);
-    const layRec = await DBP.get(CT.STORES.layout, id).catch(() => null);
-    snaps.push({ tabRec, layRec });
-    await send({ type: CT.MSG.DELETE, cardId: id });
-    await DBP.del(CT.STORES.layout, id).catch(() => {});
-    const u = shotUrls.get(id); if (u) { URL.revokeObjectURL(u); shotUrls.delete(id); }
-  }
-  selection.clear();
-  pushUndo(`Closed ${ids.length} card${ids.length === 1 ? "" : "s"}`, async () => {
-    for (const s of snaps) {
-      if (s.tabRec) { s.tabRec.tabId = null; s.tabRec.state = "cold"; await DBP.put(CT.STORES.tabs, s.tabRec).catch(() => {}); }
-      if (s.layRec) await DBP.put(CT.STORES.layout, s.layRec).catch(() => {});
+  hideUrlPop();   // the hovered card is about to vanish without a pointerleave
+  await withInteraction(async () => {
+    // Snapshot for undo while the records still exist in the DB.
+    const snaps = [];
+    for (const id of ids) {
+      if (!card(id)) continue;
+      const tabRec = await DBP.get(CT.STORES.tabs, id).catch(() => null);
+      const layRec = await DBP.get(CT.STORES.layout, id).catch(() => null);
+      snaps.push({ tabRec, layRec });
     }
-    await loadAll(); render();
+    // Drop the cards from in-memory state and re-render *before* the async DB round-trip. The card and
+    // any group outline it anchored then disappear together in one frame: renderGroups() retires the
+    // view of a group whose last member just left. The interaction lease also defers any external
+    // CHANGED reload until we exit (then drains it), so nothing can redraw the now-orphaned outline —
+    // that race was the "ghost" that hung around until the next drag.
+    const idset = new Set(ids);
+    state.cards = state.cards.filter((c) => !idset.has(c.cardId));
+    for (const id of ids) {
+      selection.delete(id);
+      const u = shotUrls.get(id); if (u) { URL.revokeObjectURL(u); shotUrls.delete(id); }
+    }
+    render();
+    // Now make the deletion durable.
+    for (const id of ids) {
+      await send({ type: CT.MSG.DELETE, cardId: id });
+      await DBP.del(CT.STORES.layout, id).catch(() => {});
+    }
+    pushUndo(`Closed ${ids.length} card${ids.length === 1 ? "" : "s"}`, async () => {
+      for (const s of snaps) {
+        if (s.tabRec) { s.tabRec.tabId = null; s.tabRec.state = "cold"; await DBP.put(CT.STORES.tabs, s.tabRec).catch(() => {}); }
+        if (s.layRec) await DBP.put(CT.STORES.layout, s.layRec).catch(() => {});
+      }
+      await loadAll(); render();
+    });
+    await loadAll(); render();   // reconcile; the lease keeps external reloads deferred until we return
   });
-  busy = false; await loadAll(); render();
 }
 
 // ---------------- undo ----------------
@@ -597,9 +664,9 @@ const urlPopEl = $("urlpop");
 let urlPopT = null;
 function scheduleUrlPop(el, url) {
   clearTimeout(urlPopT);
-  if (busy || !url) return;
+  if (isInteracting() || !url) return;
   urlPopT = setTimeout(() => {
-    if (busy) return;
+    if (isInteracting()) return;
     urlPopEl.textContent = url;
     urlPopEl.style.display = "block";                 // display first so offsetWidth/Height measure
     urlPopEl.classList.add("show");
@@ -737,8 +804,8 @@ const FONTS = [
     ["Papyrus", 'Papyrus,fantasy'],
   ]],
 ];
-function buildFontOptions() {
-  const sel = $("s-font"); sel.replaceChildren();
+function buildFontOptions(sel) {
+  sel.replaceChildren();
   for (const [cat, fonts] of FONTS) {
     const og = document.createElement("optgroup"); og.label = cat;
     for (const [label, stack] of fonts) {
@@ -749,8 +816,7 @@ function buildFontOptions() {
     sel.appendChild(og);
   }
 }
-function setFontValue(stack) {
-  const sel = $("s-font");
+function setFontValue(sel, stack) {
   if (![...sel.options].some((o) => o.value === stack)) {   // a font from an old/imported board that isn't catalogued
     const o = document.createElement("option"); o.value = stack; o.textContent = "Custom"; o.style.fontFamily = stack; sel.appendChild(o);
   }
@@ -766,7 +832,7 @@ function buildPreviewCard() {
   }, false);
   el.id = "s-preview-card";
   const note = el.querySelector(".note"); if (note) note.removeAttribute("contenteditable");
-  $("s-preview-frame").replaceChildren(el);
+  $("s-preview-stage").replaceChildren(el);
 }
 // Live preview card — reflects the unsaved control values so changes are visible before Save.
 function updatePreview() {
@@ -774,30 +840,55 @@ function updatePreview() {
   const cw = +$("s-cardw").value || CT.DEFAULTS.cardWidth;
   const size = +$("s-size").value || CT.DEFAULTS.labelSize;
   const lines = Math.max(1, Math.min(5, +$("s-titlelines").value || 1));
+  const noteSize = +$("s-notesize").value || CT.DEFAULTS.noteSize;
+  const groupSize = +$("s-groupsize").value || CT.DEFAULTS.groupSize;
   card.style.setProperty("--card-w", cw + "px");
   card.style.setProperty("--label-font", $("s-font").value || CT.DEFAULTS.labelFont);
   card.style.setProperty("--label-size", size + "px");
   card.style.setProperty("--title-lines", lines);
-  card.style.transform = `scale(${Math.max(0.5, Math.min(1.08, 200 / cw))})`;
+  card.style.setProperty("--note-font", $("s-notefont").value || CT.DEFAULTS.noteFont);
+  card.style.setProperty("--note-size", noteSize + "px");
+  card.style.transform = `scale(${Math.max(0.5, Math.min(1.08, 200 / cw))})`;   // stage flex-centres it
   const paper = $("s-theme").value === "paper", felt = $("s-felt").value || CT.DEFAULTS.feltColor;
   $("s-preview-frame").style.background = paper
     ? "radial-gradient(135% 135% at 50% -10%, #e9e6dc, #d8d4c6)"
     : `radial-gradient(135% 135% at 50% -10%, ${felt}, #181b21)`;   // #181b21 = --table-bg-2 default, matching the real table
+  const glabel = $("s-preview-glabel");
+  if (glabel) {
+    glabel.textContent = "Group label";
+    glabel.style.fontFamily = $("s-groupfont").value || CT.DEFAULTS.groupFont;
+    glabel.style.fontSize = groupSize + "px";
+    glabel.style.color = paper ? "#4a4a44" : "#eef2ef";   // chalk that contrasts the previewed felt
+  }
   const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
-  set("s-cardw-val", cw + "px"); set("s-size-val", size + "px"); set("s-quality-val", (+$("s-quality").value).toFixed(2));
+  set("s-cardw-val", cw + "px"); set("s-size-val", size + "px");
+  set("s-notesize-val", noteSize + "px"); set("s-groupsize-val", groupSize + "px");
+  set("s-quality-val", (+$("s-quality").value).toFixed(2));
 }
 function wireSettings() {
-  for (const id of ["s-theme", "s-felt", "s-cardw", "s-font", "s-size", "s-titlelines", "s-quality"]) {
+  for (const id of ["s-theme", "s-felt", "s-cardw", "s-font", "s-size", "s-titlelines",
+    "s-notefont", "s-notesize", "s-groupfont", "s-groupsize", "s-quality"]) {
     $(id).addEventListener("input", updatePreview);
   }
+  $("s-guard").addEventListener("change", syncGuardDep);
+}
+// The known-hosts list is only meaningful when the guard is on; hide it otherwise so the (long,
+// vaguely alarming) SSO list isn't the first thing a new user sees.
+function syncGuardDep() {
+  document.querySelector(".s-guard-dep").classList.toggle("hide", !$("s-guard").checked);
 }
 function openSettings() {
-  buildFontOptions();
+  buildFontOptions($("s-font")); buildFontOptions($("s-notefont")); buildFontOptions($("s-groupfont"));
   $("s-theme").value = S.theme; $("s-felt").value = S.feltColor; $("s-cardw").value = S.cardWidth;
-  setFontValue(S.labelFont || CT.DEFAULTS.labelFont);
-  $("s-titlelines").value = S.titleLines || 1; $("s-size").value = S.labelSize || 18; $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
+  setFontValue($("s-font"), S.labelFont || CT.DEFAULTS.labelFont);
+  setFontValue($("s-notefont"), S.noteFont || CT.DEFAULTS.noteFont);
+  setFontValue($("s-groupfont"), S.groupFont || CT.DEFAULTS.groupFont);
+  $("s-titlelines").value = S.titleLines || 1; $("s-size").value = S.labelSize || 18;
+  $("s-notesize").value = S.noteSize || CT.DEFAULTS.noteSize; $("s-groupsize").value = S.groupSize || CT.DEFAULTS.groupSize;
+  $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
   $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
   $("s-authhosts").value = (S.authHosts || []).join("\n");
+  syncGuardDep();
   buildPreviewCard();
   updatePreview();
   $("settings").classList.add("open");
@@ -812,6 +903,10 @@ $("s-save").addEventListener("click", async () => {
   S.shotQuality = +$("s-quality").value; S.maxLiveTabs = Math.max(1, +$("s-maxlive").value || 1);
   S.titleLines = Math.max(1, Math.min(5, +$("s-titlelines").value || 1));
   S.labelSize = Math.max(11, Math.min(34, +$("s-size").value || 18));
+  S.noteFont = $("s-notefont").value || CT.DEFAULTS.noteFont;
+  S.noteSize = Math.max(9, Math.min(22, +$("s-notesize").value || CT.DEFAULTS.noteSize));
+  S.groupFont = $("s-groupfont").value || CT.DEFAULTS.groupFont;
+  S.groupSize = Math.max(14, Math.min(48, +$("s-groupsize").value || CT.DEFAULTS.groupSize));
   S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
   S.authHosts = $("s-authhosts").value.split("\n").map((s) => s.trim()).filter(Boolean);
   await saveSettings(); applyTheme(); ensureGroups(); closeSettings(); render();
@@ -859,11 +954,11 @@ window.addEventListener("beforeunload", () => { for (const u of shotUrls.values(
 
 // ---------------- reactivity ----------------
 let reloadT = null;
-function scheduleReload() { if (busy) { pendingReload = true; return; } clearTimeout(reloadT); reloadT = setTimeout(async () => { await loadAll(); render(); }, 250); }
+function scheduleReload() { if (isInteracting()) { pendingReload = true; return; } clearTimeout(reloadT); reloadT = setTimeout(async () => { await loadAll(); render(); }, 250); }
 X.runtime.onMessage.addListener((msg) => {
   if (!msg) return;
   if (msg.type === CT.MSG.CHANGED) scheduleReload();
-  else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || busy) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.replaceChildren(snapImg(u)); }); }   // document-wide: also updates cards in the hand
+  else if (msg.type === CT.MSG.SHOT) { loadShot(msg.cardId).then((u) => { if (!u || isInteracting()) return; const el = document.querySelector(`.card[data-id="${msg.cardId}"] .shot`); if (el) el.replaceChildren(snapImg(u)); }); }   // document-wide: also updates cards in the hand
 });
 // Settings can change in another canvas tab (or be imported elsewhere) — keep this tab's live copy,
 // theme, and groups in sync. background.js has its own storage.onChanged; this is the page's.
@@ -874,10 +969,10 @@ X.storage.onChanged.addListener((ch, area) => {
   scheduleReload();    // membership-affecting changes (soloGroups) reconcile from fresh DB state, not stale in-memory groups
 });
 // Failsafe: a drag can't outlive the canvas tab being hidden (opening a card switches tabs). If a
-// pointerup/pointercancel is ever missed, `busy` would latch true and silently freeze every screenshot
-// update until reload. Release the latch on hide; on return, pull in anything that changed while away.
+// pointerup/pointercancel is ever missed, the gesture would otherwise stay open. Route the tab-hide
+// through the same single teardown door (endGesture); on return, pull in anything that changed.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { if (busy) { busy = false; hidePreview(); clearZones(); } }
+  if (document.hidden) { if (activeGesture) { endGesture(); render(); drainPending(); } }
   else { pendingReload = false; scheduleReload(); }
 });
 
