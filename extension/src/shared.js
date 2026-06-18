@@ -36,6 +36,12 @@
       noteFont: 'ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
       groupSize: 27,                  // group label
       groupFont: '"Permanent Marker","Marker Felt","Comic Sans MS",cursive',   // bundled (Apache 2.0)
+      // sticky notes — standalone annotations on the canvas (stored in the `notes` store). Size and
+      // color are fixed for every note (configured here, not per-note); font is editable too.
+      stickyColor: "#fdf3a3",         // soft yellow Post-it
+      stickySize: 180,                // square, in px (world units)
+      stickyFont: '"Caveat","Bradley Hand","Segoe Print","Comic Sans MS",cursive',   // bundled handwriting
+      stickyFontSize: 18,
       shotQuality: 0.7,
       shotMaxWidth: 480,
       captureIntervalMs: 6000,

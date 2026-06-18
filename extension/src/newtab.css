@@ -53,7 +53,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .group-wrap path { transition: d .12s ease, stroke-width .12s ease, opacity .12s ease; }
 #group-paths .group-wrap.near path { stroke-width: 4.8; opacity: .95; }   /* bold when a press would grab the group */
 #group-paths .preview path { stroke-dasharray: 9 7; opacity: .42; }
-#cards { position: absolute; left: 0; top: 0; }
+#cards, #stickies { position: absolute; left: 0; top: 0; }
 #labels { position: fixed; inset: 0; pointer-events: none; z-index: 600; }
 .group-label {
   position: absolute; transform: translate(-50%, -100%);
@@ -99,6 +99,34 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 }
 .card:hover .close { display: flex; }
 
+/* ---- sticky note ---- */
+.sticky {
+  position: absolute; width: var(--sticky-size); height: var(--sticky-size);
+  background: var(--sticky-color);
+  background-image: linear-gradient(158deg, rgba(255, 255, 255, .34), rgba(0, 0, 0, .06));   /* soft paper sheen + faint bottom shade */
+  padding: 15px 15px 17px; border-radius: 2px; cursor: grab; color: #4a4733;
+  font-family: var(--sticky-font); font-size: var(--sticky-font-size); line-height: 1.28;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, .32), 0 2px 5px rgba(0, 0, 0, .22);
+}
+.sticky.dragging { cursor: grabbing; box-shadow: 0 16px 32px rgba(0, 0, 0, .42), 0 4px 9px rgba(0, 0, 0, .3); z-index: 1000; }
+.sticky.selected { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sticky .sticky-text { width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; outline: none; }
+.sticky.editing { cursor: text; }
+.sticky.editing .sticky-text { overflow: auto; cursor: text; }
+.sticky:not(.editing) .sticky-text:empty::before { content: "note"; opacity: .4; }
+.sticky-edit, .sticky-del {
+  position: absolute; width: 24px; height: 24px; border-radius: 50%; padding: 0; z-index: 2;
+  border: none; cursor: pointer; display: none; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1;
+}
+.sticky-edit { top: 7px; right: 7px; background: rgba(0, 0, 0, .12); color: rgba(0, 0, 0, .58); }
+.sticky-edit:hover { background: rgba(0, 0, 0, .2); }
+.sticky:hover .sticky-edit { display: flex; }
+.sticky.editing .sticky-edit { display: none; }   /* already editing → pencil makes way for the delete */
+.sticky-del { bottom: 7px; right: 7px; background: #d8423b; color: #fff; }
+.sticky-del:hover { background: #c0352f; }
+.sticky.editing .sticky-del { display: flex; }
+
 /* ---- hand ---- */
 #hand { position: fixed; left: 50%; bottom: -22px; transform: translateX(-50%); height: 230px; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; z-index: 800; }
 /* fan rotation + hover lift are set inline from JS (renderHand) so they don't depend on CSS var support/caching */
@@ -129,6 +157,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 
 #trash { position: fixed; left: 22px; bottom: 22px; width: 66px; height: 66px; z-index: 850; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: rgba(0, 0, 0, .28); border: 2px dashed rgba(238, 242, 239, .35); opacity: .45; transition: all .14s ease; }
 #trash.hot { opacity: 1; transform: scale(1.12); background: rgba(216, 66, 59, .35); border-color: #d8423b; }
+
+/* ---- sticky-note pile: drag one off to make a new note (sits above the hint, bottom-right) ---- */
+#sticky-pile { position: fixed; right: 22px; bottom: 52px; width: 54px; height: 54px; z-index: 850; cursor: grab; touch-action: none; transition: transform .14s ease; }
+#sticky-pile::before, #sticky-pile::after, #sticky-pile .pile-note {
+  content: ""; position: absolute; inset: 0; border-radius: 2px; background: var(--sticky-color);
+  background-image: linear-gradient(158deg, rgba(255, 255, 255, .3), rgba(0, 0, 0, .07));
+}
+#sticky-pile::before { transform: rotate(5deg) translate(3px, 2px); z-index: 1; box-shadow: 0 4px 9px rgba(0, 0, 0, .26); }
+#sticky-pile::after { transform: rotate(-7deg) translate(-3px, 1px); z-index: 2; box-shadow: 0 4px 9px rgba(0, 0, 0, .26); }
+#sticky-pile .pile-note { transform: rotate(-2deg); z-index: 3; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 13px rgba(0, 0, 0, .3); }
+#sticky-pile .pile-plus { font-size: 26px; font-weight: 600; color: rgba(74, 71, 51, .5); line-height: 1; }
+#sticky-pile:hover { transform: translateY(-3px); }
+#sticky-pile.pulling { cursor: grabbing; }
 
 /* ---- context menu ---- */
 #menu { position: fixed; z-index: 1100; min-width: 190px; background: #20242b; border: 1px solid rgba(255, 255, 255, .12); border-radius: 10px; padding: 6px; box-shadow: 0 18px 40px rgba(0, 0, 0, .5); display: none; }
@@ -189,6 +230,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .s-field { display: inline-flex; align-items: center; gap: 9px; }
 .s-val { font-size: 12px; color: rgba(255, 255, 255, .55); min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
 .panel select.s-fontsel { max-width: 230px; }
+/* compact "Text" rows: a name in the gutter, the font select on top of its size — so the four text
+   elements stack as scannable blocks instead of eight near-identical full-width rows. */
+.s-type { display: grid; grid-template-columns: 80px 1fr; column-gap: 12px; row-gap: 7px; align-items: center; margin: 12px 0; }
+.s-type-name { grid-column: 1; grid-row: 1 / 3; font-size: 13px; color: #cfd3da; }
+.s-type .s-fontsel { grid-column: 2; grid-row: 1; width: 100%; max-width: none; }
+.s-type-size { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.s-type-size input[type=range] { width: 150px; }
+.s-type-size .s-val { min-width: 40px; }
+.s-inline { display: inline-flex; align-items: center; gap: 6px; color: #cfd3da; font-size: 12.5px; }
+.s-inline input[type=number] { width: 46px; }
 /* min-width:0 keeps the (potentially oversized, clipped) preview card from inflating this flex
    item's min-content size — without it, widening the preview card reflows the whole panel and the
    card-width slider slides out from under the pointer (runaway drag). */
@@ -200,6 +251,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
    so wider settings stop reading as wider in the preview. */
 .s-preview-frame .card { position: relative; flex-shrink: 0; cursor: default; pointer-events: none; transform-origin: center; box-shadow: var(--lift); }
 .s-preview-glabel { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); max-width: 90%; font-family: var(--group-font); font-size: var(--group-size); line-height: 1.1; color: var(--chalk); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, .3); pointer-events: none; z-index: 2; }
+/* preview sticky chip — pinned in the frame corner; reflects color + font live (size is shown
+   numerically by the slider, so the chip stays a fixed, frame-fitting square) */
+.s-preview-sticky {
+  position: absolute; left: 14px; bottom: 14px; width: 94px; height: 94px; z-index: 3;
+  padding: 9px; border-radius: 2px; overflow: hidden; color: #4a4733; line-height: 1.2;
+  transform: rotate(-4deg); box-shadow: 0 6px 14px rgba(0, 0, 0, .34);
+  background-image: linear-gradient(158deg, rgba(255, 255, 255, .34), rgba(0, 0, 0, .06));
+}
 .s-preview-cap { text-align: center; font-size: 11px; color: rgba(255, 255, 255, .45); margin-top: 9px; }
 @media (max-width: 640px) {
   .settings-panel { width: 460px; }

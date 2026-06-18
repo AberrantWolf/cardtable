@@ -9,11 +9,12 @@ const HAND_W = 158, HAND_STEP = 82;   // hand card width and per-card footprint 
 const $ = (id) => document.getElementById(id);
 const tableEl = $("table"), worldEl = $("world"), cardsEl = $("cards"), labelsEl = $("labels"),
   pathsEl = $("group-paths"), handEl = $("hand"), trashEl = $("trash"), menuEl = $("menu"),
-  searchEl = $("search"), countEl = $("count"), emptyEl = $("empty"), toastEl = $("toast");
+  searchEl = $("search"), countEl = $("count"), emptyEl = $("empty"), toastEl = $("toast"),
+  stickiesEl = $("stickies"), pileEl = $("sticky-pile");
 
 let S = { ...CT.DEFAULTS };
 let CARD_W = 230, CARD_H = 245;
-const state = { cards: [], groups: [], view: { x: 0, y: 0, zoom: 1 }, zmax: 1 };
+const state = { cards: [], groups: [], stickies: [], view: { x: 0, y: 0, zoom: 1 }, zmax: 1 };
 const selection = new Set();
 const shotUrls = new Map();
 let filter = "";
@@ -34,6 +35,7 @@ const centerOf = (c) => ({ x: c.x + CARD_W / 2, y: c.y + CARD_H / 2 });
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const overlaps = (a, b) => a.x < b.x + CARD_W && a.x + CARD_W > b.x && a.y < b.y + CARD_H && a.y + CARD_H > b.y;
 const rotFor = (id) => ((hashStr(id) % 640) / 100) - 3.2;
+const stickyRot = (id) => ((hashStr(id) % 500) / 100) - 2.5;   // subtle tilt, like a real note slapped down
 const matches = (c) => { const q = filter.toLowerCase(); return (c.title || "").toLowerCase().includes(q) || (c.url || "").toLowerCase().includes(q); };
 const send = (m) => { try { return Promise.resolve(X.runtime.sendMessage(m)); } catch (e) { return Promise.resolve(); } };
 
@@ -53,6 +55,10 @@ function applyTheme() {
   r.style.setProperty("--note-size", (S.noteSize || CT.DEFAULTS.noteSize) + "px");
   r.style.setProperty("--group-font", S.groupFont || CT.DEFAULTS.groupFont);
   r.style.setProperty("--group-size", (S.groupSize || CT.DEFAULTS.groupSize) + "px");
+  r.style.setProperty("--sticky-color", S.stickyColor || CT.DEFAULTS.stickyColor);
+  r.style.setProperty("--sticky-size", (S.stickySize || CT.DEFAULTS.stickySize) + "px");
+  r.style.setProperty("--sticky-font", S.stickyFont || CT.DEFAULTS.stickyFont);
+  r.style.setProperty("--sticky-font-size", (S.stickyFontSize || CT.DEFAULTS.stickyFontSize) + "px");
   if (S.theme === "paper") r.style.removeProperty("--table-bg");
   else r.style.setProperty("--table-bg", S.feltColor || CT.DEFAULTS.feltColor);
   document.body.classList.toggle("theme-paper", S.theme === "paper");
@@ -75,6 +81,7 @@ async function flush() {
 }
 const saveGroup = (g) => DBP.put(CT.STORES.groups, g).catch(() => {});
 const delGroupRec = (id) => DBP.del(CT.STORES.groups, id).catch(() => {});
+const saveSticky = (s) => DBP.put(CT.STORES.notes, { id: s.id, x: s.x, y: s.y, text: s.text, rot: s.rot, z: s.z }).catch(() => {});
 
 // ---------------- data load ----------------
 async function loadShot(cardId) {
@@ -95,8 +102,8 @@ async function loadShot(cardId) {
 let loadChain = Promise.resolve();
 function loadAll() { loadChain = loadChain.then(_loadAll, _loadAll); return loadChain; }
 async function _loadAll() {
-  const [tabs, layouts, groups] = await Promise.all([
-    DBP.all(CT.STORES.tabs), DBP.all(CT.STORES.layout), DBP.all(CT.STORES.groups),
+  const [tabs, layouts, groups, notes] = await Promise.all([
+    DBP.all(CT.STORES.tabs), DBP.all(CT.STORES.layout), DBP.all(CT.STORES.groups), DBP.all(CT.STORES.notes),
   ]);
   const lay = new Map(layouts.map((l) => [l.cardId, l]));
   state.groups = groups;
@@ -120,6 +127,11 @@ async function _loadAll() {
     }
     return c;
   });
+  // stickies share the z-stack with cards so one can be brought above/below a card
+  state.stickies = notes.map((n) => {
+    const z = n.z || ++zmax; if (z > zmax) zmax = z;
+    return { id: n.id, x: n.x || 0, y: n.y || 0, text: n.text || "", rot: n.rot ?? stickyRot(n.id), z };
+  });
   state.zmax = zmax;
   for (const c of newPlacements) persist(c);
   // drop empty groups; in "outline around lone cards" mode give every lone card its own group
@@ -127,8 +139,8 @@ async function _loadAll() {
   const gids = new Set(state.groups.map((g) => g.id));
   for (const c of state.cards) if (c.group && !gids.has(c.group)) c.group = null;   // heal refs to a pruned group (e.g. after undoing a delete) so the card isn't stuck outline-less
   if (S.soloGroups) for (const c of state.cards) if (c.placed && !c.group) ensureSoloGroup(c);
-  // prune selection of vanished cards
-  for (const id of [...selection]) if (!card(id)) selection.delete(id);
+  // prune selection of vanished cards/stickies (both share the one selection set)
+  for (const id of [...selection]) if (!card(id) && !sticky(id)) selection.delete(id);
   // load any missing screenshots
   await Promise.all(state.cards.filter((c) => !c.shotUrl).map((c) => loadShot(c.cardId)));
 }
@@ -175,7 +187,24 @@ function buildCard(c, inHand) {
   el.addEventListener("dragstart", (e) => e.preventDefault());   // never let the browser native-drag the screenshot
   return el;
 }
-function plainPaste(e) { e.preventDefault(); const t = (e.clipboardData || window.clipboardData).getData("text/plain") || ""; document.execCommand("insertText", false, t); }
+// Insert plain text at the caret, keeping literal "\n" line breaks. The browser's own insertText
+// command re-normalizes a newline into a <div>/<br> paragraph, and an empty such paragraph serializes
+// through innerText as TWO newlines while rendering as one blank line — so a committed note silently
+// grew a blank line per Enter (or per pasted blank line). Inserting a raw text node avoids that: a real
+// "\n" in a white-space:pre-wrap box renders and round-trips through innerText identically.
+function insertPlainText(t) {
+  const sel = window.getSelection(); if (!sel || !sel.rangeCount) return;
+  const range = sel.getRangeAt(0); range.deleteContents();
+  const node = document.createTextNode(t);
+  range.insertNode(node);
+  // A trailing newline has no caretable line below it until something follows — drop a layout-only
+  // <br> there. It isn't part of innerText, so it never reaches the committed text.
+  if (!node.nextSibling) node.after(document.createElement("br"));
+  range.setStartAfter(node); range.collapse(true);
+  sel.removeAllRanges(); sel.addRange(range);
+}
+function plainPaste(e) { e.preventDefault(); const t = (e.clipboardData || window.clipboardData).getData("text/plain") || ""; insertPlainText(t); }
+function enterInsertsNewline(e) { if (e.key !== "Enter") return; e.preventDefault(); insertPlainText("\n"); }   // keep notes plain-text (see insertPlainText)
 
 function renderCards() {
   cardsEl.replaceChildren();
@@ -187,6 +216,7 @@ function renderCards() {
     const note = el.querySelector(".note");
     note.addEventListener("pointerdown", (e) => e.stopPropagation());
     note.addEventListener("paste", plainPaste);
+    note.addEventListener("keydown", enterInsertsNewline);   // same plain-text newline handling as stickies
     note.addEventListener("input", () => { if (!note.textContent.trim() && note.innerHTML) note.innerHTML = ""; });   // restore :empty → placeholder
     note.addEventListener("blur", () => { const v = note.innerText.trim(); if (!v) note.innerHTML = ""; if (c.note !== v) { c.note = v; persist(c); } });
     el.addEventListener("pointerdown", (e) => startCardDrag(e, c, el));
@@ -197,6 +227,151 @@ function renderCards() {
     cardsEl.appendChild(el);
   }
 }
+
+// ---------------- sticky notes ----------------
+// Standalone yellow notes on the canvas. Size/color/font are global settings (see applyTheme's
+// --sticky-* vars), so a note record only carries position, text, tilt and z. You drag a note from
+// anywhere on it; the corner pencil or a double-click enters text editing (a single press never drops
+// a caret mid-drag). Records live in the `notes` store, so export/import carries them for free.
+const sticky = (id) => state.stickies.find((s) => s.id === id);
+function bumpStickyZ(s, el) { s.z = ++state.zmax; if (el) el.style.zIndex = s.z; saveSticky(s); }
+function buildSticky(s) {
+  const el = elem("div", "sticky"); el.dataset.id = s.id;
+  if (selection.has(s.id)) el.classList.add("selected");
+  el.style.left = s.x + "px"; el.style.top = s.y + "px"; el.style.transform = `rotate(${s.rot}deg)`; el.style.zIndex = s.z || 1;
+  el.append(elem("div", "sticky-text", { textContent: s.text || "" }));
+  el.append(elem("button", "sticky-edit", { type: "button", title: "Edit text", textContent: "✎" }));
+  el.append(elem("button", "sticky-del", { type: "button", title: "Delete note", textContent: "🗑" }));
+  el.addEventListener("dragstart", (e) => e.preventDefault());
+  return el;
+}
+function renderStickies() {
+  stickiesEl.replaceChildren();
+  for (const s of state.stickies) {
+    const el = buildSticky(s);
+    const txt = el.querySelector(".sticky-text");
+    const edit = el.querySelector(".sticky-edit");
+    const del = el.querySelector(".sticky-del");
+    txt.addEventListener("paste", plainPaste);
+    txt.addEventListener("keydown", enterInsertsNewline);
+    txt.addEventListener("blur", () => commitSticky(s, el, txt));
+    edit.addEventListener("pointerdown", (e) => e.stopPropagation());
+    edit.addEventListener("click", (e) => { e.stopPropagation(); startStickyEdit(s, el); });
+    del.addEventListener("pointerdown", (e) => e.stopPropagation());
+    del.addEventListener("click", (e) => { e.stopPropagation(); deleteSticky(s); });
+    el.addEventListener("pointerdown", (e) => startStickyDrag(e, s, el));
+    el.addEventListener("dblclick", (e) => { if (el.classList.contains("editing")) return; e.stopPropagation(); startStickyEdit(s, el); });   // already editing → let the dblclick select a word
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); openStickyMenu(e.clientX, e.clientY, s); });
+    stickiesEl.appendChild(el);
+  }
+}
+function addSticky(wx, wy, edit) {
+  const id = "n-" + CT.uuid();
+  const sz = S.stickySize || CT.DEFAULTS.stickySize;
+  const s = { id, x: Math.round(wx - sz / 2), y: Math.round(wy - sz / 2), text: "", rot: stickyRot(id), z: ++state.zmax };
+  state.stickies.push(s); saveSticky(s);
+  renderStickies();
+  if (edit) startStickyEdit(s);   // a fresh note opens ready to type
+}
+function startStickyEdit(s, el) {
+  el = el || stickiesEl.querySelector(`[data-id="${s.id}"]`); if (!el) return;
+  bumpStickyZ(s, el);
+  const txt = el.querySelector(".sticky-text");
+  el.classList.add("editing"); txt.contentEditable = "true"; txt.spellcheck = false;
+  txt.focus();
+  const r = document.createRange(); r.selectNodeContents(txt); r.collapse(false);   // caret at end
+  const sel = window.getSelection(); if (sel) { sel.removeAllRanges(); sel.addRange(r); }
+}
+function commitSticky(s, el, txt) {
+  el.classList.remove("editing"); txt.removeAttribute("contenteditable");
+  const v = txt.innerText.replace(/\s+$/, "");   // plain text; drop any trailing blank lines
+  txt.textContent = v;                            // normalize DOM back to a single text node
+  if (s.text !== v) { s.text = v; saveSticky(s); }
+}
+const deleteSticky = (s) => deleteStickies([s.id]);
+function deleteStickies(ids) {
+  const snaps = state.stickies.filter((s) => ids.includes(s.id)).map((s) => ({ id: s.id, x: s.x, y: s.y, text: s.text, rot: s.rot, z: s.z }));
+  if (!snaps.length) return;
+  const idset = new Set(snaps.map((s) => s.id));
+  state.stickies = state.stickies.filter((x) => !idset.has(x.id));
+  for (const id of idset) { selection.delete(id); DBP.del(CT.STORES.notes, id).catch(() => {}); }
+  renderStickies();
+  pushUndo(`Deleted ${snaps.length} note${snaps.length === 1 ? "" : "s"}`, async () => {
+    for (const s of snaps) await DBP.put(CT.STORES.notes, s).catch(() => {});
+    await loadAll(); render();
+  });
+}
+function startStickyDrag(e, s, el) {
+  if (e.button !== 0) return;
+  e.stopPropagation();                                 // the note owns this press — don't pan/clear underneath
+  if (el.classList.contains("editing")) return;        // editing: let the text field place the caret / select
+  closeMenu(); hideUrlPop();
+  // select like a card: a press selects (shift/ctrl/meta toggles into a multi-selection)
+  if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(s.id);
+  else if (!selection.has(s.id)) selectOnly(s.id);
+  bumpStickyZ(s, el);
+  const start = toWorld(e.clientX, e.clientY), ox = s.x, oy = s.y;
+  const downX = e.clientX, downY = e.clientY; let moved = false;
+  el.classList.add("dragging");
+  const signal = beginGesture(el, e.pointerId, () => { el.classList.remove("dragging"); trashEl.classList.remove("hot"); });
+  const move = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - downX, ev.clientY - downY) > 4) moved = true;
+    const w = toWorld(ev.clientX, ev.clientY);
+    s.x = ox + (w.x - start.x); s.y = oy + (w.y - start.y);
+    el.style.left = s.x + "px"; el.style.top = s.y + "px";
+    trashEl.classList.toggle("hot", overTrash(ev.clientX, ev.clientY));
+  };
+  const finish = (ev) => {
+    const wasMoved = moved, cancel = ev.type === "pointercancel";
+    endGesture();
+    try {
+      if (cancel) { if (wasMoved) saveSticky(s); }                        // tab hidden mid-drag: just keep the position
+      else if (wasMoved) { overTrash(ev.clientX, ev.clientY) ? deleteSticky(s) : saveSticky(s); }
+      // (!cancel && !wasMoved) → a plain click on the note: nothing to commit (pencil handles editing)
+    } finally { drainPending(); }
+  };
+  el.addEventListener("pointermove", move, { signal });
+  el.addEventListener("pointerup", finish, { signal });
+  el.addEventListener("pointercancel", finish, { signal });
+}
+// The bottom-right pile: a plain click drops a note at the viewport center; dragging off it pulls a
+// fresh note that follows the pointer (a ghost in world-space, like the hand floater) and lands where
+// you release — unless you drop it on the trash, which cancels. Reuses the RAII gesture so capture,
+// the floater, and the hot-zone all tear down through one door.
+function startPileDrag(e) {
+  if (e.button !== 0) return;
+  e.stopPropagation(); closeMenu(); hideUrlPop();
+  const downX = e.clientX, downY = e.clientY;
+  const sz = S.stickySize || CT.DEFAULTS.stickySize;
+  let floater = null, moved = false;
+  pileEl.classList.add("pulling");
+  const signal = beginGesture(pileEl, e.pointerId, () => { pileEl.classList.remove("pulling"); trashEl.classList.remove("hot"); if (floater) floater.remove(); });
+  const begin = () => {
+    moved = true;
+    floater = elem("div", "sticky dragging"); floater.style.pointerEvents = "none"; floater.style.transform = "rotate(-2deg)";
+    floater.append(elem("div", "sticky-text"));
+    stickiesEl.appendChild(floater);
+  };
+  const move = (ev) => {
+    if (!moved) { if (Math.hypot(ev.clientX - downX, ev.clientY - downY) <= 5) return; begin(); }
+    const w = toWorld(ev.clientX, ev.clientY);
+    floater.style.left = (w.x - sz / 2) + "px"; floater.style.top = (w.y - sz / 2) + "px";
+    trashEl.classList.toggle("hot", overTrash(ev.clientX, ev.clientY));
+  };
+  const finish = (ev) => {
+    const wasMoved = moved, cancel = ev.type === "pointercancel";
+    endGesture();
+    try {
+      if (!wasMoved) { const w = toWorld(innerWidth / 2, innerHeight / 2); addSticky(w.x, w.y, true); }   // a click → note at center, like "+ note"
+      else if (cancel || overTrash(ev.clientX, ev.clientY)) { /* canceled or dropped on the trash → make nothing */ }
+      else { const w = toWorld(ev.clientX, ev.clientY); addSticky(w.x, w.y, true); }
+    } finally { drainPending(); }
+  };
+  pileEl.addEventListener("pointermove", move, { signal });
+  pileEl.addEventListener("pointerup", finish, { signal });
+  pileEl.addEventListener("pointercancel", finish, { signal });
+}
+pileEl.addEventListener("pointerdown", startPileDrag);
 
 // ---------------- groups (incremental) ----------------
 const groupViews = new Map();
@@ -308,7 +483,7 @@ function renderHand() {
   layoutHand();
 }
 
-function render() { applyView(); renderGroups(); renderCards(); renderHand(); updateChrome(); }
+function render() { applyView(); renderGroups(); renderCards(); renderStickies(); renderHand(); updateChrome(); }
 function updateChrome() {
   const total = state.cards.length;
   countEl.textContent = total ? `${total} card${total === 1 ? "" : "s"}` : "";
@@ -377,7 +552,18 @@ function ensureGroups() {
 function selectOnly(id) { selection.clear(); selection.add(id); reflectSelection(); }
 function toggleSel(id) { selection.has(id) ? selection.delete(id) : selection.add(id); reflectSelection(); }
 function clearSel() { if (selection.size) { selection.clear(); reflectSelection(); } }
-function reflectSelection() { cardsEl.querySelectorAll(".card").forEach((el) => el.classList.toggle("selected", selection.has(el.dataset.id))); }
+function reflectSelection() {
+  cardsEl.querySelectorAll(".card").forEach((el) => el.classList.toggle("selected", selection.has(el.dataset.id)));
+  stickiesEl.querySelectorAll(".sticky").forEach((el) => el.classList.toggle("selected", selection.has(el.dataset.id)));
+}
+// Delete the current selection — cards and stickies are partitioned to their own delete paths.
+function deleteSelection() {
+  const ids = [...selection];
+  const stickyIds = ids.filter((id) => sticky(id));
+  const cardIds = ids.filter((id) => card(id));
+  if (stickyIds.length) deleteStickies(stickyIds);
+  if (cardIds.length) removeCards(cardIds);
+}
 
 // ---------------- interaction lifecycle (RAII, replaces the old `busy` boolean) ----------------
 // A pointer drag owns an AbortController; every listener it adds uses {signal}, so one abort()
@@ -533,7 +719,7 @@ tableEl.addEventListener("pointermove", (e) => {
   hoverRAF = requestAnimationFrame(() => {
     hoverRAF = null;
     if (isInteracting() || tableEl.classList.contains("panning")) return;
-    if (hoverEv.target.closest(".card") || hoverEv.target.closest(".group-label")) { setNear(null); return; }
+    if (hoverEv.target.closest(".card") || hoverEv.target.closest(".sticky") || hoverEv.target.closest(".group-label")) { setNear(null); return; }
     const g = nearestGroupOutline(toWorld(hoverEv.clientX, hoverEv.clientY));
     setNear(g ? g.id : null);
   });
@@ -687,7 +873,7 @@ function hideUrlPop() { clearTimeout(urlPopT); urlPopEl.classList.remove("show")
 
 // ---------------- context menu ----------------
 function openMenu(x, y, c) {
-  const ids = selection.size ? [...selection] : (c ? [c.cardId] : []);
+  const ids = selection.size ? [...selection].filter((id) => card(id)) : (c ? [c.cardId] : []);   // card actions ignore any stickies in the selection
   const items = [];
   if (c) {
     items.push(["Open", () => openCard(c.cardId)]);
@@ -697,9 +883,17 @@ function openMenu(x, y, c) {
     items.push(["sep"]);
     items.push([`Close ${ids.length > 1 ? ids.length + " cards" : "card"}`, () => removeCards(ids), true]);
   } else {
+    const w = toWorld(x, y);
+    items.push(["Add sticky note", () => addSticky(w.x, w.y, true)]);
     items.push(["Fit all", fit]);
     items.push(["Settings", openSettings]);
   }
+  showMenu(x, y, items);
+}
+function openStickyMenu(x, y, s) {
+  showMenu(x, y, [["Edit text", () => startStickyEdit(s)], ["sep"], ["Delete note", () => deleteSticky(s), true]]);
+}
+function showMenu(x, y, items) {
   menuEl.replaceChildren();
   for (const it of items) {
     if (it[0] === "sep") { const s = document.createElement("div"); s.className = "sep"; menuEl.appendChild(s); continue; }
@@ -716,7 +910,7 @@ function closeMenu() { menuEl.classList.remove("open"); }
 // ---------------- pan / zoom / canvas ----------------
 tableEl.addEventListener("pointerdown", (e) => {
   closeMenu(); hideUrlPop();
-  if (e.button !== 0 || e.target.closest(".card") || e.target.closest(".group-label")) return;
+  if (e.button !== 0 || e.target.closest(".card") || e.target.closest(".sticky") || e.target.closest(".group-label")) return;
   const gNear = nearestGroupOutline(toWorld(e.clientX, e.clientY));
   if (gNear) { startGroupDrag(e, gNear); return; }     // press on/near an outline grabs the group
   clearSel();
@@ -726,7 +920,7 @@ tableEl.addEventListener("pointerdown", (e) => {
   const up = () => { tableEl.classList.remove("panning"); tableEl.removeEventListener("pointermove", move); tableEl.removeEventListener("pointerup", up); saveView(); };
   tableEl.addEventListener("pointermove", move); tableEl.addEventListener("pointerup", up);
 });
-tableEl.addEventListener("contextmenu", (e) => { if (e.target.closest(".card")) return; e.preventDefault(); openMenu(e.clientX, e.clientY, null); });
+tableEl.addEventListener("contextmenu", (e) => { if (e.target.closest(".card") || e.target.closest(".sticky")) return; e.preventDefault(); openMenu(e.clientX, e.clientY, null); });
 tableEl.addEventListener("wheel", (e) => {
   e.preventDefault(); hideUrlPop();
   const z = Math.max(0.2, Math.min(3, state.view.zoom * Math.exp(-e.deltaY * 0.0015)));
@@ -749,10 +943,10 @@ window.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable;
   if (e.key === "/" && !typing) { e.preventDefault(); searchEl.focus(); return; }
   if (typing) { if (e.key === "Escape") e.target.blur(); return; }
-  if ((e.key === "Delete" || e.key === "Backspace") && selection.size) { e.preventDefault(); removeCards([...selection]); }
+  if ((e.key === "Delete" || e.key === "Backspace") && selection.size) { e.preventDefault(); deleteSelection(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
   else if (e.key.toLowerCase() === "f") fit();
-  else if (e.key === "Enter" && selection.size === 1) openCard([...selection][0]);
+  else if (e.key === "Enter" && selection.size === 1) { const id = [...selection][0]; const s = sticky(id); s ? startStickyEdit(s) : openCard(id); }
   else if (e.key === "Escape") { clearSel(); closeMenu(); }
 });
 
@@ -903,14 +1097,24 @@ function updatePreview() {
     glabel.style.fontSize = groupSize + "px";
     glabel.style.color = paper ? "#4a4a44" : "#eef2ef";   // chalk that contrasts the previewed felt
   }
+  const stickySize = +$("s-stickysize").value || CT.DEFAULTS.stickySize;
+  const stickyFontSize = +$("s-stickyfontsize").value || CT.DEFAULTS.stickyFontSize;
+  const stickyEl = $("s-preview-sticky");
+  if (stickyEl) {
+    stickyEl.style.background = $("s-stickycolor").value || CT.DEFAULTS.stickyColor;
+    stickyEl.style.fontFamily = $("s-stickyfont").value || CT.DEFAULTS.stickyFont;
+    stickyEl.style.fontSize = stickyFontSize + "px";
+  }
   const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
   set("s-cardw-val", cw + "px"); set("s-size-val", size + "px");
   set("s-notesize-val", noteSize + "px"); set("s-groupsize-val", groupSize + "px");
+  set("s-stickysize-val", stickySize + "px"); set("s-stickyfontsize-val", stickyFontSize + "px");
   set("s-quality-val", (+$("s-quality").value).toFixed(2));
 }
 function wireSettings() {
   for (const id of ["s-theme", "s-felt", "s-cardw", "s-font", "s-size", "s-titlelines",
-    "s-notefont", "s-notesize", "s-groupfont", "s-groupsize", "s-quality"]) {
+    "s-notefont", "s-notesize", "s-groupfont", "s-groupsize",
+    "s-stickycolor", "s-stickysize", "s-stickyfont", "s-stickyfontsize", "s-quality"]) {
     $(id).addEventListener("input", updatePreview);
   }
   $("s-guard").addEventListener("change", syncGuardDep);
@@ -921,13 +1125,17 @@ function syncGuardDep() {
   document.querySelector(".s-guard-dep").classList.toggle("hide", !$("s-guard").checked);
 }
 function openSettings() {
-  buildFontOptions($("s-font")); buildFontOptions($("s-notefont")); buildFontOptions($("s-groupfont"));
+  buildFontOptions($("s-font")); buildFontOptions($("s-notefont")); buildFontOptions($("s-groupfont")); buildFontOptions($("s-stickyfont"));
   $("s-theme").value = S.theme; $("s-felt").value = S.feltColor; $("s-cardw").value = S.cardWidth;
   setFontValue($("s-font"), S.labelFont || CT.DEFAULTS.labelFont);
   setFontValue($("s-notefont"), S.noteFont || CT.DEFAULTS.noteFont);
   setFontValue($("s-groupfont"), S.groupFont || CT.DEFAULTS.groupFont);
+  setFontValue($("s-stickyfont"), S.stickyFont || CT.DEFAULTS.stickyFont);
   $("s-titlelines").value = S.titleLines || 1; $("s-size").value = S.labelSize || 18;
   $("s-notesize").value = S.noteSize || CT.DEFAULTS.noteSize; $("s-groupsize").value = S.groupSize || CT.DEFAULTS.groupSize;
+  $("s-stickycolor").value = S.stickyColor || CT.DEFAULTS.stickyColor;
+  $("s-stickysize").value = S.stickySize || CT.DEFAULTS.stickySize;
+  $("s-stickyfontsize").value = S.stickyFontSize || CT.DEFAULTS.stickyFontSize;
   $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
   $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
   $("s-favicons").checked = S.showFavicons !== false;
@@ -954,6 +1162,10 @@ $("s-save").addEventListener("click", async () => {
   S.noteSize = Math.max(9, Math.min(22, +$("s-notesize").value || CT.DEFAULTS.noteSize));
   S.groupFont = $("s-groupfont").value || CT.DEFAULTS.groupFont;
   S.groupSize = Math.max(14, Math.min(48, +$("s-groupsize").value || CT.DEFAULTS.groupSize));
+  S.stickyColor = $("s-stickycolor").value || CT.DEFAULTS.stickyColor;
+  S.stickySize = Math.max(120, Math.min(320, +$("s-stickysize").value || CT.DEFAULTS.stickySize));
+  S.stickyFont = $("s-stickyfont").value || CT.DEFAULTS.stickyFont;
+  S.stickyFontSize = Math.max(11, Math.min(34, +$("s-stickyfontsize").value || CT.DEFAULTS.stickyFontSize));
   S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
   S.showFavicons = $("s-favicons").checked;
   S.newTabOpensCanvas = $("s-newtab").checked;
@@ -988,6 +1200,7 @@ $("s-file").addEventListener("change", async (e) => {
 
 // ---------------- toolbar + global ----------------
 $("btn-fit").addEventListener("click", fit);
+$("btn-note").addEventListener("click", () => { const w = toWorld(innerWidth / 2, innerHeight / 2); addSticky(w.x, w.y, true); });
 $("toast-undo").addEventListener("click", undo);
 window.addEventListener("click", (e) => { if (!e.target.closest("#menu")) closeMenu(); });
 // Capture phase (runs before card/group drag handlers): commit an open note/group-name edit
