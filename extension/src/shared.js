@@ -47,6 +47,7 @@
       captureIntervalMs: 6000,
       maxLiveTabs: 1,                 // sleep policy knob; raise (or add tiering) later
       handOnNewTab: true,
+      keepHandCardsOnTabClose: false, // off = closing an unplaced/hand tab removes its card instead of making it cold
       newTabOpensCanvas: false,       // opt-in: route the browser's new tab to the single canvas tab
       pinCanvasTab: true,             // pin the canvas tab (compact, leftmost, can't be closed by accident)
       soloGroups: false,

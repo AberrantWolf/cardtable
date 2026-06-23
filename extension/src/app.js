@@ -1153,7 +1153,7 @@ function openSettings() {
   $("s-stickysize").value = S.stickySize || CT.DEFAULTS.stickySize;
   $("s-stickyfontsize").value = S.stickyFontSize || CT.DEFAULTS.stickyFontSize;
   $("s-quality").value = S.shotQuality; $("s-maxlive").value = S.maxLiveTabs;
-  $("s-hand").checked = S.handOnNewTab; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
+  $("s-hand").checked = S.handOnNewTab; $("s-keep-hand").checked = !!S.keepHandCardsOnTabClose; $("s-solo").checked = S.soloGroups; $("s-guard").checked = S.deepLinkGuard; $("s-reduce").checked = S.reducedMotion;
   $("s-favicons").checked = S.showFavicons !== false;
   $("s-newtab").checked = !!S.newTabOpensCanvas;
   $("s-pin").checked = S.pinCanvasTab !== false;
@@ -1182,7 +1182,7 @@ $("s-save").addEventListener("click", async () => {
   S.stickySize = Math.max(120, Math.min(320, +$("s-stickysize").value || CT.DEFAULTS.stickySize));
   S.stickyFont = $("s-stickyfont").value || CT.DEFAULTS.stickyFont;
   S.stickyFontSize = Math.max(11, Math.min(34, +$("s-stickyfontsize").value || CT.DEFAULTS.stickyFontSize));
-  S.handOnNewTab = $("s-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
+  S.handOnNewTab = $("s-hand").checked; S.keepHandCardsOnTabClose = $("s-keep-hand").checked; S.soloGroups = $("s-solo").checked; S.deepLinkGuard = $("s-guard").checked; S.reducedMotion = $("s-reduce").checked;
   S.showFavicons = $("s-favicons").checked;
   S.newTabOpensCanvas = $("s-newtab").checked;
   S.pinCanvasTab = $("s-pin").checked;

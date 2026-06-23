@@ -68,7 +68,7 @@ closed (cold) instead of merely discarded — a config/policy change, not a rewr
 ## Settings (⚙ on the canvas)
 
 Theme (slate/paper) & felt color · card width · label font · screenshot quality ·
-keep-N-tabs-awake · new-tabs-land-in-hand · deep-link guard on/off · auth-host list ·
+keep-N-tabs-awake · new-tabs-land-in-hand · hand-card close behavior · deep-link guard on/off · auth-host list ·
 reduce motion · **Export / Import board** (replace or merge JSON; cards come back as cold until opened).
 
 ## Keyboard

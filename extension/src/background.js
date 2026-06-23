@@ -219,9 +219,17 @@ const deleting = new Set();
 async function deleteCard(cardId) {
   const card = await idbGet(CT.STORES.tabs, cardId);
   if (card && card.tabId != null) { deleting.add(card.tabId); try { await X.tabs.remove(card.tabId); } catch (e) {} }
+  await deleteCardRecords(cardId);
+  broadcastChanged();
+}
+async function deleteCardRecords(cardId) {
   await idbDel(CT.STORES.tabs, cardId);
   await idbDel(CT.STORES.shots, cardId);
-  broadcastChanged();
+  await idbDel(CT.STORES.layout, cardId);
+}
+async function cardIsInHand(cardId) {
+  const layout = await idbGet(CT.STORES.layout, cardId).catch(() => null);
+  return !layout || layout.placed !== true;
 }
 async function focusCanvas() {
   const url = X.runtime.getURL("newtab.html");
@@ -285,7 +293,13 @@ X.tabs.onRemoved.addListener(async (tabId) => {
   delGuard(tabId); delRestore(tabId);                       // drop any session-backed state for this tab
   if (deleting.has(tabId)) { deleting.delete(tabId); return; }
   const card = await cardByTab(tabId);
-  if (card) { card.state = "cold"; card.tabId = null; await idbPut(CT.STORES.tabs, card); broadcastChanged(); }
+  if (!card) return;
+  if (!settings.keepHandCardsOnTabClose && await cardIsInHand(card.cardId)) {
+    await deleteCardRecords(card.cardId);
+    broadcastChanged();
+    return;
+  }
+  card.state = "cold"; card.tabId = null; await idbPut(CT.STORES.tabs, card); broadcastChanged();
 });
 if (X.tabs.onReplaced) X.tabs.onReplaced.addListener(async (added, removed) => {
   const card = await cardByTab(removed); if (card) { card.tabId = added; await idbPut(CT.STORES.tabs, card); }

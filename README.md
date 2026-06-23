@@ -74,7 +74,7 @@ The status dot on each card shows **live / sleeping / cold**.
 ## ⚙️ Settings (⚙ on the canvas)
 
 Theme (slate / paper) & felt color · card width · label font & size · screenshot quality
-· *keep N tabs awake* · new-tabs-land-in-hand · group-around-lone-cards · SSO deep-link
+· *keep N tabs awake* · new-tabs-land-in-hand · hand-card close behavior · group-around-lone-cards · SSO deep-link
 guard + auth-host list · reduce motion · **Export / Import board** (replace or merge JSON).
 
 Grouping feel is tuned by `ADD_PAD` / `REMOVE_PAD` (the join/leave hysteresis) and
