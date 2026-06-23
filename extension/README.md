@@ -1,7 +1,8 @@
 # cardtable (browser extension)
 
-Your open tabs as **Polaroid cards on a spatial canvas**. The canvas replaces your
-new-tab page. Tabs you don't have open in front of you **sleep** (discarded) to stay
+Your open tabs as **Polaroid cards on a spatial canvas**. The canvas opens as a
+single tab from the toolbar button or `Alt+Shift+C`, with an optional setting to route
+new tabs there. Tabs you don't have open in front of you **sleep** (discarded) to stay
 cheap, but keep their scroll/form/session state. Double-click a card to jump to that
 tab; the **SSO deep-link guard** sends you back to the exact page after a re-login.
 
@@ -16,8 +17,8 @@ It targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 - **Chromium**: `chrome://extensions` → enable *Developer mode* → *Load unpacked* → `dist/chromium`
 - **Firefox**: `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → `dist/firefox/manifest.json`
 
-Then open a normal **new tab** — that's the canvas. Re-run `./build.sh` and reload the
-extension after edits.
+Open the canvas with the toolbar button or `Alt+Shift+C`. Re-run `./build.sh` and reload the
+extension after edits. To make every new tab jump to the canvas, enable **Open the canvas on every new tab** in Settings.
 
 > Install prompt asks for access to all sites. That's required to screenshot pages and
 > track tabs — all of it runs locally; nothing leaves your machine.
@@ -68,7 +69,7 @@ closed (cold) instead of merely discarded — a config/policy change, not a rewr
 
 Theme (slate/paper) & felt color · card width · label font · screenshot quality ·
 keep-N-tabs-awake · new-tabs-land-in-hand · deep-link guard on/off · auth-host list ·
-reduce motion · **Export / Import board** (JSON; cards come back as cold until opened).
+reduce motion · **Export / Import board** (replace or merge JSON; cards come back as cold until opened).
 
 ## Keyboard
 

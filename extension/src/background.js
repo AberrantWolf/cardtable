@@ -305,15 +305,23 @@ async function reconcile() {
     const openTabs = (await X.tabs.query({})).filter((t) => CT.isTrackable(t.url) && !isCanvas(t.url));
     const cards = await idbAll(CT.STORES.tabs);
     const byUrl = new Map();
-    for (const c of cards) { const k = CT.normUrl(c.url); if (!byUrl.has(k)) byUrl.set(k, c); }
+    for (const c of cards) {
+      const k = CT.normUrl(c.url);
+      if (!byUrl.has(k)) byUrl.set(k, []);
+      byUrl.get(k).push(c);
+    }
     const matched = new Set();
     for (const t of openTabs) {
       let card = await cardByTab(t.id);
-      if (!card) { const cand = byUrl.get(CT.normUrl(t.url)); if (cand && !matched.has(cand.cardId)) card = cand; }
+      if (card && matched.has(card.cardId)) card = null;
+      if (!card) {
+        const bucket = byUrl.get(CT.normUrl(t.url)) || [];
+        card = bucket.find((cand) => !matched.has(cand.cardId)) || null;
+      }
       if (!card) {
         card = { cardId: CT.uuid(), url: t.url, title: t.title || t.url, favicon: t.favIconUrl || "", tabId: t.id, state: t.discarded ? "sleeping" : "live", windowId: t.windowId, createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0 };
       } else {
-        card.tabId = t.id; card.state = t.discarded ? "sleeping" : "live";
+        card.tabId = t.id; card.state = t.discarded ? "sleeping" : "live"; card.windowId = t.windowId; card.lastSeen = Date.now();
         if (t.title) card.title = t.title; if (t.favIconUrl) card.favicon = t.favIconUrl;
       }
       matched.add(card.cardId);

@@ -14,6 +14,7 @@ for t in chromium firefox; do
   rm -rf "$out"
   mkdir -p "$out"
   cp -r "$src/." "$out/"
+  rm -f "$out/fonts/README.md"   # dev-only build notes; the font LICENSE files stay (OFL/Apache attribution)
   node "$here/build-manifest.mjs" "$t" "$out/manifest.json"
   echo "built  $out"
 done

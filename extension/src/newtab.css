@@ -190,7 +190,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .panel input[type=text], .panel textarea { width: 230px; }
 .panel textarea { height: 70px; resize: vertical; }
 .panel input[type=range] { width: 180px; }
-.panel .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.panel .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.panel .actions .import-mode { margin-right: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #cfd3da; }
+.panel .actions .import-mode select { width: 172px; }
 .panel .actions button { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; cursor: pointer; border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .1); color: #fff; }
 .panel .actions button.primary { background: var(--accent); border-color: var(--accent); }
 .panel .hint { font-size: 11.5px; color: rgba(255, 255, 255, .45); margin-top: 2px; }

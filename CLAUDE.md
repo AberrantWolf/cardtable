@@ -9,9 +9,11 @@ canvas. The canvas is a single tab you summon with the toolbar button or `Alt+Sh
 (focus-or-create, so it stays a singleton); pinned by default (`pinCanvasTab` toggles
 it). It no longer overrides the new-tab page by default, though a `newTabOpensCanvas`
 setting can opt back into that.
-Cards can be grouped (drawn as hand-drawn chalk blobs), annotated, and let sleep. There is **no package.json, no npm, no test suite, and
-no linter** — it's vanilla JS run directly by the browser; the only build step is a small
-Node script that merges the per-browser manifest.
+Cards can be grouped (drawn as hand-drawn chalk blobs), annotated, and let sleep. Tooling
+lives in the root `package.json`: `npm run build` wraps `extension/build.sh`, and
+`npm run lint` rebuilds then runs `web-ext` against the Firefox output. There is no
+browser-side bundler or app framework; the extension ships vanilla JS plus a small Node
+script that merges the per-browser manifest.
 
 ## Layout
 

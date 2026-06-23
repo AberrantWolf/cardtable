@@ -527,11 +527,13 @@ function finalizeGroup(c) {
 }
 function pruneGroups() {
   const min = S.soloGroups ? 1 : 2;
+  const dels = [];
   state.groups = state.groups.filter((g) => {
     const m = state.cards.filter((c) => c.group === g.id);
-    if (m.length < min) { if (!S.soloGroups) m.forEach((c) => { c.group = null; persist(c); }); delGroupRec(g.id); return false; }
+    if (m.length < min) { if (!S.soloGroups) m.forEach((c) => { c.group = null; persist(c); }); dels.push(delGroupRec(g.id)); return false; }
     return true;
   });
+  return Promise.all(dels);
 }
 // A lone card's own 1-member group (reused if it already has one). Powers "outline around lone cards".
 function ensureSoloGroup(c) {
@@ -802,17 +804,29 @@ async function removeCards(ids) {
       const layRec = await DBP.get(CT.STORES.layout, id).catch(() => null);
       snaps.push({ tabRec, layRec });
     }
+    const idset = new Set(ids);
+    const affectedGroupIds = new Set(state.cards.filter((c) => idset.has(c.cardId) && c.group).map((c) => c.group));
+    const groupSnaps = [], memberLayoutSnaps = [];
+    for (const gid of affectedGroupIds) {
+      const grp = state.groups.find((g) => g.id === gid) || await DBP.get(CT.STORES.groups, gid).catch(() => null);
+      if (grp) groupSnaps.push({ ...grp });
+      for (const m of state.cards.filter((c) => c.group === gid && !idset.has(c.cardId))) {
+        const lay = await DBP.get(CT.STORES.layout, m.cardId).catch(() => null);
+        if (lay) memberLayoutSnaps.push(lay);
+      }
+    }
     // Drop the cards from in-memory state and re-render *before* the async DB round-trip. The card and
     // any group outline it anchored then disappear together in one frame: renderGroups() retires the
     // view of a group whose last member just left. The interaction lease also defers any external
     // CHANGED reload until we exit (then drains it), so nothing can redraw the now-orphaned outline —
     // that race was the "ghost" that hung around until the next drag.
-    const idset = new Set(ids);
     state.cards = state.cards.filter((c) => !idset.has(c.cardId));
     for (const id of ids) {
       selection.delete(id);
       const u = shotUrls.get(id); if (u) { URL.revokeObjectURL(u); shotUrls.delete(id); }
     }
+    await pruneGroups();
+    clearTimeout(flushT); await flush();
     render();
     // Now make the deletion durable.
     for (const id of ids) {
@@ -820,6 +834,8 @@ async function removeCards(ids) {
       await DBP.del(CT.STORES.layout, id).catch(() => {});
     }
     pushUndo(`Closed ${ids.length} card${ids.length === 1 ? "" : "s"}`, async () => {
+      for (const g of groupSnaps) await DBP.put(CT.STORES.groups, g).catch(() => {});
+      for (const l of memberLayoutSnaps) await DBP.put(CT.STORES.layout, l).catch(() => {});
       for (const s of snaps) {
         if (s.tabRec) { s.tabRec.tabId = null; s.tabRec.state = "cold"; await DBP.put(CT.STORES.tabs, s.tabRec).catch(() => {}); }
         if (s.layRec) await DBP.put(CT.STORES.layout, s.layRec).catch(() => {});
@@ -1185,15 +1201,25 @@ $("s-export").addEventListener("click", async () => {
 $("s-import").addEventListener("click", () => $("s-file").click());
 $("s-file").addEventListener("change", async (e) => {
   const file = e.target.files[0]; if (!file) return;
+  const mode = $("s-import-mode").value === "merge" ? "merge" : "replace";
   try {
     const data = JSON.parse(await file.text());
-    if (data.settings) { S = { ...CT.DEFAULTS, ...data.settings }; await saveSettings(); }
-    if (data.view) { state.view = data.view; await X.storage.local.set({ view: state.view }); }
-    for (const t of data.tabs || []) await DBP.put(CT.STORES.tabs, { ...t, tabId: null, state: "cold" });
-    for (const l of data.layout || []) await DBP.put(CT.STORES.layout, l);
-    for (const g of data.groups || []) await DBP.put(CT.STORES.groups, g);
-    for (const n of data.notes || []) await DBP.put(CT.STORES.notes, n);
-    applyTheme(); await loadAll(); render(); closeSettings(); showToast("Board imported", false);
+    const tabs = Array.isArray(data.tabs) ? data.tabs : [];
+    const layout = Array.isArray(data.layout) ? data.layout : [];
+    const groups = Array.isArray(data.groups) ? data.groups : [];
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    if (mode === "replace") {
+      for (const u of shotUrls.values()) URL.revokeObjectURL(u);
+      shotUrls.clear(); selection.clear(); undoStack.length = 0;
+      await Promise.all([CT.STORES.tabs, CT.STORES.shots, CT.STORES.layout, CT.STORES.groups, CT.STORES.notes].map((name) => DBP.clear(name)));
+      if (data.settings) { S = { ...CT.DEFAULTS, ...data.settings }; await saveSettings(); }
+      if (data.view) { state.view = data.view; await X.storage.local.set({ view: state.view }); }
+    }
+    for (const t of tabs) await DBP.put(CT.STORES.tabs, { ...t, tabId: null, state: "cold" });
+    for (const l of layout) await DBP.put(CT.STORES.layout, l);
+    for (const g of groups) await DBP.put(CT.STORES.groups, g);
+    for (const n of notes) await DBP.put(CT.STORES.notes, n);
+    applyTheme(); await loadAll(); render(); closeSettings(); showToast(mode === "replace" ? "Board replaced" : "Board merged", false);
   } catch (err) { showToast("Import failed: " + err, false); }
   e.target.value = "";
 });

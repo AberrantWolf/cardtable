@@ -6,7 +6,7 @@ into **hand-drawn chalk blobs**, annotate them, rename the groups, and let the t
 aren't using **sleep** to save memory. New tabs arrive as **cards in your hand** along
 the bottom; drop them onto the table into a group, on their own, or into the bin.
 
-It replaces your new-tab page, so the canvas *is* home.
+Open the canvas from the toolbar button or `Alt+Shift+C`; a setting can also route every new tab there if you want the canvas-as-home workflow.
 
 > 💭 I was sad to learn about the dead **Kosmik** browser, so I put this together to see
 > if it could help me keep my head together when juggling multiple git hosts and
@@ -39,9 +39,9 @@ cd extension && ./build.sh   # assembles dist/chromium and dist/firefox (needs N
 - **Chromium** — `chrome://extensions` → enable *Developer mode* → *Load unpacked* → `dist/chromium`
 - **Firefox** — `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → `dist/firefox/manifest.json`
 
-Then open a normal **new tab** — that's the canvas. Re-run `./build.sh` and reload the
+Open the canvas with the toolbar button or `Alt+Shift+C`. Re-run `./build.sh` and reload the
 extension after edits. See [`extension/README.md`](extension/README.md) for build
-internals, debugging, and how to hide the tab strip.
+internals, debugging, and how to opt into routing every new tab to the canvas.
 
 ## 🎮 Using it
 
@@ -75,7 +75,7 @@ The status dot on each card shows **live / sleeping / cold**.
 
 Theme (slate / paper) & felt color · card width · label font & size · screenshot quality
 · *keep N tabs awake* · new-tabs-land-in-hand · group-around-lone-cards · SSO deep-link
-guard + auth-host list · reduce motion · **Export / Import board** (JSON).
+guard + auth-host list · reduce motion · **Export / Import board** (replace or merge JSON).
 
 Grouping feel is tuned by `ADD_PAD` / `REMOVE_PAD` (the join/leave hysteresis) and
 `NEW_GROUP_DIST` near the top of `extension/src/app.js`. State (cards, groups, notes,
