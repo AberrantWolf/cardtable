@@ -19,7 +19,7 @@ Open the canvas from the toolbar button or `Alt+Shift+C`; a setting can also rou
   but keep their scroll, form, and session state.
 - ✏️ **Chalk groups** — drop cards near each other to form hand-drawn outlines; rename
   them, and drag an outline to move the whole group.
-- 🗒️ **Notes** — annotate any card on its bottom strip.
+- 🗒️ **Notes & stickies** — annotate any card, or drop standalone sticky notes onto the table.
 - 🔐 **SSO deep-link guard** — when a re-login bounces you around, it lands you back on
   the page you actually wanted.
 - 💾 **Local only** — everything lives in your browser; nothing leaves your machine.
@@ -51,10 +51,10 @@ internals, debugging, and how to opt into routing every new tab to the canvas.
   overlap needed — you can leave space between cards); leaving is sticky (you must drag
   well clear), so cards don't fall out of a group by accident. Drop next to a loose card
   to start a new group, or in open space to stand alone.
-- ✏️ **Drag a group's outline** to move the whole group together.
+- ✏️ **Drag a group's outline** to move the whole group together; nearby stickies come along without being included in the chalk outline.
 - 👇 **Drag a card down into the hand** to pull it back for placing elsewhere.
 - 🆕 **Drag a hand card** (the bottom fan) onto the table to place it, or onto **🗑** to discard.
-- 🗒️ **Click a card's bottom strip** to type a note. **Click a group name** to rename it.
+- 🗒️ **Click a card's bottom strip** to type a note. **Click a group name** to rename it. Drag from **+ note** / the sticky pile to add standalone notes.
 - 👆 **Double-click a card** to jump to that tab — it wakes, or is recreated if it was closed.
 
 The status dot on each card shows **live / sleeping / cold**.
@@ -73,7 +73,7 @@ The status dot on each card shows **live / sleeping / cold**.
 
 ## ⚙️ Settings (⚙ on the canvas)
 
-Theme (slate / paper) & felt color · card width · label font & size · screenshot quality
+Theme (slate / paper) & felt color · card width · label font & size · sticky color / size / font · screenshot quality
 · *keep N tabs awake* · new-tabs-land-in-hand · hand-card close behavior · group-around-lone-cards · SSO deep-link
 guard + auth-host list · reduce motion · **Export / Import board** (replace or merge JSON).
 
@@ -92,9 +92,8 @@ stored locally on your device.
 
 This is the first pass of something I've been using daily and find genuinely useful —
 not yet formally released. Ideas for later (mostly as I want them myself): tiering /
-cold-archive for hundreds of tabs · freeform sticky notes · rubber-band (marquee)
-multi-select · arrow-key navigation & fuller a11y · sync across devices · screenshots
-included in export.
+cold-archive for hundreds of tabs · rubber-band (marquee) multi-select · arrow-key
+navigation & fuller a11y · sync across devices · screenshots included in export.
 
 Suggestions welcome. 🙌
 

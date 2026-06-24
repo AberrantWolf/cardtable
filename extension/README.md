@@ -2,9 +2,11 @@
 
 Your open tabs as **Polaroid cards on a spatial canvas**. The canvas opens as a
 single tab from the toolbar button or `Alt+Shift+C`, with an optional setting to route
-new tabs there. Tabs you don't have open in front of you **sleep** (discarded) to stay
-cheap, but keep their scroll/form/session state. Double-click a card to jump to that
-tab; the **SSO deep-link guard** sends you back to the exact page after a re-login.
+new tabs there. Cards can carry short notes, and standalone sticky notes can sit with
+the groups they describe. Tabs you don't have open in front of you **sleep**
+(discarded) to stay cheap, but keep their scroll/form/session state. Double-click a
+card to jump to that tab; the **SSO deep-link guard** sends you back to the exact page
+after a re-login.
 
 It targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 
@@ -52,6 +54,7 @@ recreated from its URL.
 - **Single click** = select (shift/ctrl-click for multi-select).
 - **Double click** = open/activate the tab.
 - **Close for good** = the card's ✕, the 🗑 zone, or `Delete` (closes the tab and removes the card — with **Undo**).
+- **Sticky notes** = drag from **+ note** / the sticky pile; notes inside or near a group move with it but do not become outlined group members.
 - Closing a tab in the browser instead leaves a **cold** card you can reopen.
 - The status dot shows **live / sleeping / cold**.
 
@@ -67,7 +70,7 @@ closed (cold) instead of merely discarded — a config/policy change, not a rewr
 
 ## Settings (⚙ on the canvas)
 
-Theme (slate/paper) & felt color · card width · label font · screenshot quality ·
+Theme (slate/paper) & felt color · card width · label font · sticky color / size / font · screenshot quality ·
 keep-N-tabs-awake · new-tabs-land-in-hand · hand-card close behavior · deep-link guard on/off · auth-host list ·
 reduce motion · **Export / Import board** (replace or merge JSON; cards come back as cold until opened).
 
@@ -87,6 +90,6 @@ In daily personal use, but not yet formally released or store-reviewed. Known ro
 
 ## Roadmap (not in this cut)
 
-Tiering / cold-archive for hundreds of tabs · freeform sticky notes · rubber-band
-(marquee) multi-select · arrow-key navigation & fuller a11y · sync across devices ·
-screenshots included in export.
+Tiering / cold-archive for hundreds of tabs · rubber-band (marquee) multi-select ·
+arrow-key navigation & fuller a11y · sync across devices · screenshots included in
+export.

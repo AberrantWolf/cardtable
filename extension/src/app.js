@@ -161,6 +161,8 @@ function snapImg(url) { return elem("img", "snap", { src: url, alt: "", draggabl
 // Request https ourselves so there's nothing to upgrade; if the host has no https icon the load
 // fails and the existing onerror just hides it (same outcome the auto-upgrade would reach, quietly).
 function httpsFavicon(url) { return url && url.startsWith("http://") ? "https://" + url.slice(7) : url; }
+const normalizePlainText = (text) => (text || "").replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+const noteDisplay = (text) => elem("div", "note", { textContent: text || "" });
 function buildCard(c, inHand) {
   const el = elem("div", "card"); el.dataset.id = c.cardId;
   if (!inHand) {
@@ -181,31 +183,12 @@ function buildCard(c, inHand) {
   label.append(elem("span", "title", { textContent: c.title || "" }));
   el.append(label);
   if (!inHand) {
-    el.append(elem("div", "note", { contentEditable: "true", spellcheck: false, textContent: c.note || "" }));
+    el.append(noteDisplay(c.note));
     el.append(elem("div", "close", { title: "close for good", textContent: "✕" }));
   }
   el.addEventListener("dragstart", (e) => e.preventDefault());   // never let the browser native-drag the screenshot
   return el;
 }
-// Insert plain text at the caret, keeping literal "\n" line breaks. The browser's own insertText
-// command re-normalizes a newline into a <div>/<br> paragraph, and an empty such paragraph serializes
-// through innerText as TWO newlines while rendering as one blank line — so a committed note silently
-// grew a blank line per Enter (or per pasted blank line). Inserting a raw text node avoids that: a real
-// "\n" in a white-space:pre-wrap box renders and round-trips through innerText identically.
-function insertPlainText(t) {
-  const sel = window.getSelection(); if (!sel || !sel.rangeCount) return;
-  const range = sel.getRangeAt(0); range.deleteContents();
-  const node = document.createTextNode(t);
-  range.insertNode(node);
-  // A trailing newline has no caretable line below it until something follows — drop a layout-only
-  // <br> there. It isn't part of innerText, so it never reaches the committed text.
-  if (!node.nextSibling) node.after(document.createElement("br"));
-  range.setStartAfter(node); range.collapse(true);
-  sel.removeAllRanges(); sel.addRange(range);
-}
-function plainPaste(e) { e.preventDefault(); const t = (e.clipboardData || window.clipboardData).getData("text/plain") || ""; insertPlainText(t); }
-function enterInsertsNewline(e) { if (e.key !== "Enter") return; e.preventDefault(); insertPlainText("\n"); }   // keep notes plain-text (see insertPlainText)
-
 function renderCards() {
   cardsEl.replaceChildren();
   for (const c of state.cards.filter((c) => c.placed)) {
@@ -213,33 +196,64 @@ function renderCards() {
     const close = el.querySelector(".close");
     close.addEventListener("pointerdown", (e) => e.stopPropagation());
     close.addEventListener("click", (e) => { e.stopPropagation(); removeCards([c.cardId]); });
-    const note = el.querySelector(".note");
-    note.addEventListener("pointerdown", (e) => e.stopPropagation());
-    note.addEventListener("paste", plainPaste);
-    note.addEventListener("keydown", enterInsertsNewline);   // same plain-text newline handling as stickies
-    note.addEventListener("input", () => { if (!note.textContent.trim() && note.innerHTML) note.innerHTML = ""; });   // restore :empty → placeholder
-    note.addEventListener("blur", () => { const v = note.innerText.trim(); if (!v) note.innerHTML = ""; if (c.note !== v) { c.note = v; persist(c); } });
+    wireCardNote(el.querySelector(".note"), c, el);
     el.addEventListener("pointerdown", (e) => startCardDrag(e, c, el));
     el.addEventListener("dblclick", (e) => { if (!e.target.closest(".note") && !e.target.closest(".close")) openCard(c.cardId); });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!selection.has(c.cardId)) selectOnly(c.cardId); openMenu(e.clientX, e.clientY, c); });
+    el.addEventListener("contextmenu", (e) => {
+      if (e.target.closest(".note-input")) return;
+      e.preventDefault(); if (!selection.has(c.cardId)) selectOnly(c.cardId); openMenu(e.clientX, e.clientY, c);
+    });
     el.addEventListener("pointerenter", () => scheduleUrlPop(el, c.url));
     el.addEventListener("pointerleave", hideUrlPop);
     cardsEl.appendChild(el);
   }
 }
+function wireCardNote(note, c, el) {
+  if (!note) return;
+  note.addEventListener("pointerdown", (e) => e.stopPropagation());
+  note.addEventListener("click", (e) => { e.stopPropagation(); startCardNoteEdit(c, el); });
+}
+function fitCardNoteInput(input) { input.style.height = "0px"; input.style.height = input.scrollHeight + "px"; }
+function startCardNoteEdit(c, el) {
+  const existing = el.querySelector(".note-input");
+  if (existing) { existing.focus(); existing.selectionStart = existing.selectionEnd = existing.value.length; fitCardNoteInput(existing); return; }
+  const note = el.querySelector(".note"); if (!note) return;
+  const input = elem("textarea", "note note-input", { value: c.note || "", spellcheck: false, placeholder: "note" });
+  input.setAttribute("aria-label", "Card note");
+  input.addEventListener("pointerdown", (e) => e.stopPropagation());
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("input", () => fitCardNoteInput(input));
+  input.addEventListener("blur", () => commitCardNote(c, input));
+  note.replaceWith(input);
+  input.focus();
+  input.selectionStart = input.selectionEnd = input.value.length;
+  fitCardNoteInput(input);
+}
+function commitCardNote(c, input) {
+  const v = normalizePlainText(input.value);
+  const el = input.closest(".card");
+  const note = noteDisplay(v);
+  input.replaceWith(note);
+  if (el) wireCardNote(note, c, el);
+  if (c.note !== v) { c.note = v; persist(c); }
+}
 
 // ---------------- sticky notes ----------------
 // Standalone yellow notes on the canvas. Size/color/font are global settings (see applyTheme's
 // --sticky-* vars), so a note record only carries position, text, tilt and z. You drag a note from
-// anywhere on it; the corner pencil or a double-click enters text editing (a single press never drops
-// a caret mid-drag). Records live in the `notes` store, so export/import carries them for free.
+// anywhere on it; the corner pencil or a double-click swaps the display text for a native textarea
+// editor. Records live in the `notes` store, so export/import carries them for free.
 const sticky = (id) => state.stickies.find((s) => s.id === id);
+const stickySize = () => S.stickySize || CT.DEFAULTS.stickySize;
+const centerOfSticky = (s) => { const sz = stickySize(); return { x: s.x + sz / 2, y: s.y + sz / 2 }; };
+const stickyDisplay = (text) => elem("div", "sticky-text", { textContent: text || "" });
+const normalizeStickyText = normalizePlainText;
 function bumpStickyZ(s, el) { s.z = ++state.zmax; if (el) el.style.zIndex = s.z; saveSticky(s); }
 function buildSticky(s) {
   const el = elem("div", "sticky"); el.dataset.id = s.id;
   if (selection.has(s.id)) el.classList.add("selected");
   el.style.left = s.x + "px"; el.style.top = s.y + "px"; el.style.transform = `rotate(${s.rot}deg)`; el.style.zIndex = s.z || 1;
-  el.append(elem("div", "sticky-text", { textContent: s.text || "" }));
+  el.append(stickyDisplay(s.text));
   el.append(elem("button", "sticky-edit", { type: "button", title: "Edit text", textContent: "✎" }));
   el.append(elem("button", "sticky-del", { type: "button", title: "Delete note", textContent: "🗑" }));
   el.addEventListener("dragstart", (e) => e.preventDefault());
@@ -249,19 +263,18 @@ function renderStickies() {
   stickiesEl.replaceChildren();
   for (const s of state.stickies) {
     const el = buildSticky(s);
-    const txt = el.querySelector(".sticky-text");
     const edit = el.querySelector(".sticky-edit");
     const del = el.querySelector(".sticky-del");
-    txt.addEventListener("paste", plainPaste);
-    txt.addEventListener("keydown", enterInsertsNewline);
-    txt.addEventListener("blur", () => commitSticky(s, el, txt));
     edit.addEventListener("pointerdown", (e) => e.stopPropagation());
     edit.addEventListener("click", (e) => { e.stopPropagation(); startStickyEdit(s, el); });
     del.addEventListener("pointerdown", (e) => e.stopPropagation());
     del.addEventListener("click", (e) => { e.stopPropagation(); deleteSticky(s); });
     el.addEventListener("pointerdown", (e) => startStickyDrag(e, s, el));
-    el.addEventListener("dblclick", (e) => { if (el.classList.contains("editing")) return; e.stopPropagation(); startStickyEdit(s, el); });   // already editing → let the dblclick select a word
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); openStickyMenu(e.clientX, e.clientY, s); });
+    el.addEventListener("dblclick", (e) => { if (el.classList.contains("editing")) return; e.stopPropagation(); startStickyEdit(s, el); });
+    el.addEventListener("contextmenu", (e) => {
+      if (e.target.closest(".sticky-input")) return;
+      e.preventDefault(); e.stopPropagation(); openStickyMenu(e.clientX, e.clientY, s);
+    });
     stickiesEl.appendChild(el);
   }
 }
@@ -276,16 +289,21 @@ function addSticky(wx, wy, edit) {
 function startStickyEdit(s, el) {
   el = el || stickiesEl.querySelector(`[data-id="${s.id}"]`); if (!el) return;
   bumpStickyZ(s, el);
-  const txt = el.querySelector(".sticky-text");
-  el.classList.add("editing"); txt.contentEditable = "true"; txt.spellcheck = false;
-  txt.focus();
-  const r = document.createRange(); r.selectNodeContents(txt); r.collapse(false);   // caret at end
-  const sel = window.getSelection(); if (sel) { sel.removeAllRanges(); sel.addRange(r); }
+  const existing = el.querySelector(".sticky-input");
+  if (existing) { existing.focus(); existing.selectionStart = existing.selectionEnd = existing.value.length; return; }
+  const txt = el.querySelector(".sticky-text"); if (!txt) return;
+  const input = elem("textarea", "sticky-input", { value: s.text || "", spellcheck: false, placeholder: "note" });
+  input.setAttribute("aria-label", "Sticky note text");
+  input.addEventListener("pointerdown", (e) => e.stopPropagation());
+  input.addEventListener("blur", () => commitSticky(s, el, input));
+  el.classList.add("editing"); txt.replaceWith(input);
+  input.focus();
+  input.selectionStart = input.selectionEnd = input.value.length;
 }
-function commitSticky(s, el, txt) {
-  el.classList.remove("editing"); txt.removeAttribute("contenteditable");
-  const v = txt.innerText.replace(/\s+$/, "");   // plain text; drop any trailing blank lines
-  txt.textContent = v;                            // normalize DOM back to a single text node
+function commitSticky(s, el, input) {
+  const v = normalizeStickyText(input.value);
+  el.classList.remove("editing");
+  input.replaceWith(stickyDisplay(v));
   if (s.text !== v) { s.text = v; saveSticky(s); }
 }
 const deleteSticky = (s) => deleteStickies([s.id]);
@@ -382,25 +400,52 @@ function createGroupView(g) {
   const p1 = document.createElementNS(SVGNS, "path"), p2 = document.createElementNS(SVGNS, "path");
   wrap.append(p1, p2); pathsEl.appendChild(wrap);
   const label = document.createElement("div"); label.className = "group-label";
-  const name = document.createElement("span"); name.className = "gname"; name.contentEditable = "true"; name.spellcheck = false; name.textContent = g.name;
+  const name = document.createElement("span"); name.className = "gname";
   label.append(name); labelsEl.appendChild(label);
-  name.addEventListener("pointerdown", (e) => e.stopPropagation());
-  name.addEventListener("paste", plainPaste);
-  name.addEventListener("input", () => { if (!name.textContent.trim() && name.innerHTML) name.innerHTML = ""; });
-  name.addEventListener("blur", () => {
-    // loadAll() rebuilds state.groups with fresh objects on every CHANGED broadcast, so the
-    // captured `g` may be orphaned — write to the object renderGroups actually reads, by id.
-    const grp = state.groups.find((x) => x.id === g.id) || g;
-    const txt = name.textContent.trim();
-    const mem = membersOf(grp.id);
-    const auto = mem.length === 1 && mem[0] ? mem[0].title : "";   // lone card's auto-title
-    const v = txt === auto ? "" : txt;          // leaving the auto-title unchanged keeps it auto; a real edit sticks
-    if (v !== grp.name) { grp.name = v; saveGroup(grp); }
-  });
+  wireGroupName(name, g.id);
   wrap.style.opacity = "0"; label.style.opacity = "0";
   requestAnimationFrame(() => { wrap.style.opacity = "1"; label.style.opacity = "1"; });
   const v = { wrap, paths: [p1, p2], label, name, anchor: null };
   groupViews.set(g.id, v); return v;
+}
+function groupEditValue(grp) {
+  const mem = membersOf(grp.id);
+  return grp.name || (mem.length === 1 && mem[0] ? mem[0].title : "");
+}
+function wireGroupName(name, gid) {
+  name.addEventListener("pointerdown", (e) => e.stopPropagation());
+  name.addEventListener("click", (e) => { e.stopPropagation(); startGroupNameEdit(gid); });
+}
+function startGroupNameEdit(gid) {
+  const v = groupViews.get(gid); if (!v || v.input) return;
+  const grp = state.groups.find((x) => x.id === gid); if (!grp) return;
+  const input = elem("input", "gname gname-input", { type: "text", value: groupEditValue(grp), spellcheck: false, placeholder: "+ name" });
+  input.setAttribute("aria-label", "Group name");
+  input.addEventListener("pointerdown", (e) => e.stopPropagation());
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    else if (e.key === "Escape") { e.preventDefault(); finishGroupNameEdit(gid, input, false); }
+  });
+  input.addEventListener("blur", () => finishGroupNameEdit(gid, input, true));
+  v.name.replaceWith(input);
+  v.name = input; v.input = input;
+  input.focus(); input.select();
+}
+function finishGroupNameEdit(gid, input, commit) {
+  const v = groupViews.get(gid); if (!v || v.input !== input) return;
+  const grp = state.groups.find((x) => x.id === gid);
+  if (commit && grp) {
+    const txt = input.value.trim();
+    const auto = groupEditValue({ ...grp, name: "" });
+    const val = txt === auto ? "" : txt;
+    if (val !== grp.name) { grp.name = val; saveGroup(grp); }
+  }
+  const name = document.createElement("span"); name.className = "gname";
+  input.replaceWith(name);
+  v.name = name; v.input = null;
+  wireGroupName(name, gid);
+  renderGroups();
 }
 function placeLabel(v) { if (!v.anchor) return; const s = worldToScreen(v.anchor.x, v.anchor.y); v.label.style.left = s.x + "px"; v.label.style.top = s.y + "px"; }
 function positionLabels() { for (const v of groupViews.values()) placeLabel(v); }
@@ -417,7 +462,7 @@ function renderGroups() {
     v.paths.forEach((p, i) => p.setAttribute("d", ds[i] || ds[0]));
     const bb = bbox(outline); v.anchor = { x: (bb.minX + bb.maxX) / 2, y: bb.minY + 8 }; placeLabel(v);
     const labelText = g.name || (mem.length === 1 ? mem[0].title : "");   // lone card → show its title (stays readable zoomed out)
-    if (document.activeElement !== v.name && v.name.textContent !== labelText) v.name.textContent = labelText;
+    if (!v.input && v.name.textContent !== labelText) v.name.textContent = labelText;
   }
   for (const [gid, v] of [...groupViews]) if (!visible.has(gid)) { v.wrap.remove(); v.label.remove(); groupViews.delete(gid); }
 }
@@ -549,6 +594,13 @@ function ensureGroups() {
   if (S.soloGroups) { for (const c of state.cards) if (c.placed && !c.group) ensureSoloGroup(c); }
   else pruneGroups();
 }
+function stickiesNearGroup(gid) {
+  const mem = membersOf(gid);
+  if (!mem.length) return [];
+  const pad = GROUP_PAD + stickySize() / 2;
+  const outline = groupOutline(mem.map(rectOf), pad);
+  return state.stickies.filter((s) => pointInPolygon(centerOfSticky(s), outline));
+}
 
 // ---------------- selection ----------------
 function selectOnly(id) { selection.clear(); selection.add(id); reflectSelection(); }
@@ -674,6 +726,7 @@ function startGroupDrag(e, g) {                       // initiated by pressing o
   e.stopPropagation(); closeMenu(); setNear(null);
   const start = toWorld(e.clientX, e.clientY);
   const orig = membersOf(g.id).map((c) => ({ c, x: c.x, y: c.y }));
+  const notes = stickiesNearGroup(g.id).map((s) => ({ s, x: s.x, y: s.y }));
   const signal = beginGesture(tableEl, e.pointerId, () => { tableEl.style.cursor = ""; });
   const move = (ev) => {
     const w = toWorld(ev.clientX, ev.clientY); const dx = w.x - start.x, dy = w.y - start.y;
@@ -682,9 +735,14 @@ function startGroupDrag(e, g) {                       // initiated by pressing o
       const el = cardsEl.querySelector(`[data-id="${o.c.cardId}"]`);
       if (el) { el.style.left = o.c.x + "px"; el.style.top = o.c.y + "px"; }
     }
+    for (const o of notes) {
+      o.s.x = o.x + dx; o.s.y = o.y + dy;
+      const el = stickiesEl.querySelector(`[data-id="${o.s.id}"]`);
+      if (el) { el.style.left = o.s.x + "px"; el.style.top = o.s.y + "px"; }
+    }
     renderGroups();
   };
-  const finish = () => { endGesture(); try { orig.forEach((o) => persist(o.c)); render(); } finally { drainPending(); } };
+  const finish = () => { endGesture(); try { orig.forEach((o) => persist(o.c)); notes.forEach((o) => saveSticky(o.s)); render(); } finally { drainPending(); } };
   tableEl.addEventListener("pointermove", move, { signal });
   tableEl.addEventListener("pointerup", finish, { signal });
   tableEl.addEventListener("pointercancel", finish, { signal });
@@ -956,7 +1014,7 @@ function fit() {
 
 // ---------------- keyboard ----------------
 window.addEventListener("keydown", (e) => {
-  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable;
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
   if (e.key === "/" && !typing) { e.preventDefault(); searchEl.focus(); return; }
   if (typing) { if (e.key === "Escape") e.target.blur(); return; }
   if ((e.key === "Delete" || e.key === "Backspace") && selection.size) { e.preventDefault(); deleteSelection(); }
@@ -1071,8 +1129,7 @@ function setFontValue(sel, stack) {
   }
   sel.value = stack;
 }
-// Build the preview through the real card builder so it always matches actual cards. Sample data
-// only; strip the note's contenteditable so the static preview can't be focused/typed into.
+// Build the preview through the real card builder so it always matches actual cards. Sample data only.
 function buildPreviewCard() {
   let favicon = ""; try { favicon = X.runtime.getURL("icons/icon-48.png"); } catch (e) {}
   const el = buildCard({
@@ -1080,7 +1137,6 @@ function buildPreviewCard() {
     favicon, state: "live", note: "drag me onto the felt", shotUrl: null, x: 0, y: 0, rot: 0, z: 1,
   }, false);
   el.id = "s-preview-card";
-  const note = el.querySelector(".note"); if (note) note.removeAttribute("contenteditable");
   $("s-preview-stage").replaceChildren(el);
 }
 // Live preview card — reflects the unsaved control values so changes are visible before Save.
@@ -1233,8 +1289,8 @@ window.addEventListener("click", (e) => { if (!e.target.closest("#menu")) closeM
 // the instant you press elsewhere, and clear any stray text selection.
 document.addEventListener("pointerdown", (e) => {
   const a = document.activeElement;
-  if (a && a.isContentEditable && !a.contains(e.target)) a.blur();   // fires blur → saves before any re-render
-  if (!e.target.closest('[contenteditable="true"], input, textarea')) {
+  if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && !a.contains(e.target)) a.blur();   // fires blur → saves before any re-render
+  if (!e.target.closest('input, textarea')) {
     const sel = window.getSelection(); if (sel && !sel.isCollapsed) sel.removeAllRanges();
   }
 }, true);
