@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "cardtable",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Your tabs as cards on a spatial canvas — organize them, annotate them, and let them sleep.",
   "permissions": ["tabs", "storage", "unlimitedStorage", "webNavigation"],
   "host_permissions": ["<all_urls>"],
