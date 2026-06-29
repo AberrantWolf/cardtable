@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and sign
+    name: Build and submit
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -60,22 +60,19 @@ jobs:
           path: cardtable-chromium-${{ steps.version.outputs.version }}.zip
           if-no-files-found: error
 
-      - name: Sign Firefox xpi
+      # AMO versions are unique across channels, so RC/test tags must not consume
+      # a version on the production add-on ID.
+      - name: Submit Firefox release to AMO
+        if: steps.version.outputs.prerelease == 'false'
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
         run: |
           npx web-ext sign \
             --source-dir=extension/dist/firefox \
-            --artifacts-dir="$GITHUB_WORKSPACE/web-ext-artifacts" \
-            --channel=unlisted
-
-      - name: Upload Firefox xpi artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cardtable-firefox-${{ steps.version.outputs.version }}
-          path: web-ext-artifacts/*.xpi
-          if-no-files-found: error
+            --channel=listed \
+            --amo-metadata=extension/amo-metadata.json \
+            --approval-timeout=0
 
   publish:
     name: Publish GitHub Release
@@ -89,12 +86,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: cardtable-chromium-${{ needs.build.outputs.version }}
-          path: release-artifacts
-
-      - name: Download Firefox xpi artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: cardtable-firefox-${{ needs.build.outputs.version }}
           path: release-artifacts
 
       - name: Publish GitHub Release
@@ -119,5 +110,4 @@ jobs:
 
           gh release upload "$GITHUB_REF_NAME" \
             "release-artifacts/cardtable-chromium-$CARDTABLE_VERSION.zip" \
-            release-artifacts/*.xpi \
             --clobber

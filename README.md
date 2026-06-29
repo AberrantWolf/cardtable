@@ -28,9 +28,9 @@ Open the canvas from the toolbar button or `Alt+Shift+C`; a setting can also rou
 
 The extension targets **Chromium (MV3)** and **Firefox (MV3)** from one source tree.
 
-**Packaged builds** are attached to each [release](https://github.com/AberrantWolf/cardtable/releases):
-the Firefox `.xpi` is Mozilla-signed (open it in Firefox to install); for Chrome, unzip the
-build and load it via *Developer mode → Load unpacked*. To build from source instead:
+Chromium build ZIPs are attached to each [release](https://github.com/AberrantWolf/cardtable/releases),
+and production Firefox builds are submitted directly to Firefox Add-ons. For local development,
+unzip the Chromium build and use *Developer mode → Load unpacked*, or build from source:
 
 ```sh
 cd extension && ./build.sh   # assembles dist/chromium and dist/firefox (needs Node.js)

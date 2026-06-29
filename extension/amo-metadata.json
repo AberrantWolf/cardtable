@@ -1,0 +1,19 @@
+{
+  "name": {
+    "en-US": "cardtable"
+  },
+  "summary": {
+    "en-US": "Your tabs as cards on a spatial canvas — organize them, annotate them, and let them sleep."
+  },
+  "description": {
+    "en-US": "Turn open tabs into screenshot cards on a pannable, zoomable canvas. Arrange cards into hand-drawn groups, add notes, search your board, and let inactive tabs sleep to save memory. Everything stays locally in Firefox; cardtable has no accounts, analytics, telemetry, or servers."
+  },
+  "categories": {
+    "firefox": ["tabs"]
+  },
+  "requires_payment": false,
+  "version": {
+    "license": "MIT",
+    "approval_notes": "cardtable has no developer servers, accounts, analytics, telemetry, or remote code. It does not send stored board data, tab data, notes, or screenshots to the developer or an analytics service. Site favicon images are displayed from the URLs Firefox provides, so Firefox may load those images from the corresponding sites. The tabs permission manages and sleeps tabs; <all_urls> supports page thumbnails, titles, favicons, and scroll restoration; webNavigation supports the optional SSO deep-link guard; and storage holds the local board and thumbnails. On Firefox, screenshots remain disabled until the user explicitly grants site access. The only fetch() call converts a locally generated data: screenshot URL into a Blob. Distributed JavaScript is human-readable and is not minified, bundled, or obfuscated. To test: click the toolbar button, optionally enable screenshots, browse a few pages, and return to the canvas to arrange their cards."
+  }
+}
