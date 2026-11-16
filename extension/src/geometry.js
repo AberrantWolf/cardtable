@@ -87,3 +87,25 @@ export function chalkPaths(points, seed, passes = 2, jitter = 2.4) {
   }
   return out;
 }
+
+export function fitBounds(cards,notes,{cardWidth,cardHeight,stickySize}) {
+  const points=[];
+  for(const [items,w,h]of [[cards,cardWidth,cardHeight],[notes,stickySize,stickySize]])for(const r of items){
+    const angle=(r.rot||0)*Math.PI/180,cs=Math.cos(angle),sn=Math.sin(angle),cx=r.x+w/2,cy=r.y+h/2;
+    for(const [dx,dy]of [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]])points.push({x:cx+dx*cs-dy*sn,y:cy+dx*sn+dy*cs});
+  }
+  return points.length?bbox(points):null;
+}
+
+// Membership is supplied by the caller's index; only changed geometry is rebuilt.
+export class GroupGeometry {
+  constructor(){this.cache=new Map();this.builds=0;}
+  get(id,rects,pad=50,seed=0){
+    const key=id+':'+pad,signature=seed+'|'+rects.map(r=>[r.x,r.y,r.w,r.h].join(',')).join(';');
+    const previous=this.cache.get(key);if(previous?.signature===signature)return previous;
+    const outline=groupOutline(rects,pad),value={signature,outline,bounds:bbox(outline),paths:chalkPaths(outline.map(p=>({x:p.x+20000,y:p.y+20000})),seed)};
+    this.cache.set(key,{...value,id});this.builds++;return this.cache.get(key);
+  }
+  prune(ids){for(const [key,value]of this.cache)if(!ids.has(value.id))this.cache.delete(key);}
+  get size(){return this.cache.size;}
+}

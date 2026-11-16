@@ -95,7 +95,6 @@
           </div>
 
           <div class="s-section">Behavior</div>
-          <div class="row"><label>Keep this many tabs awake</label><input id="s-maxlive" type="number" min="1" max="20" /></div>
           <div class="row"><label>Open the canvas on every new tab<div class="hint">off by default — summon it with the toolbar button or Alt+Shift+C</div></label><input id="s-newtab" type="checkbox" /></div>
           <div class="row"><label>Pin the canvas tab<div class="hint">keeps it compact and leftmost so it can't be closed by accident</div></label><input id="s-pin" type="checkbox" /></div>
           <div class="row"><label>New tabs land in the hand</label><input id="s-hand" type="checkbox" /></div>
@@ -106,10 +105,6 @@
           <div class="row"><label>Screenshot quality</label><span class="s-field"><input id="s-quality" type="range" min="0.3" max="0.95" step="0.05" /><span class="s-val" id="s-quality-val"></span></span></div>
           <div class="row hide" id="s-perm-row"><label>Screenshots<div class="hint">Firefox grants page access on request, not at install. Without it, cardtable can't capture thumbnails.</div></label><button id="s-perm-grant" class="s-grant">Enable</button></div>
 
-          <div class="s-section">Experimental</div>
-          <p class="s-note"><strong>SSO deep-link restore.</strong> Reopening a card that lives behind single sign-on often dumps you on the app's home page instead of the page you saved. With this on, cardtable remembers the page you meant to open and — once it sees the tab bounce through a known login host and return to the <em>same site</em> — finishes the trip for you. It only ever redirects within that one site, only right after a login bounce, and gives up after 90&nbsp;seconds. If you don't use SSO apps, leave it off.</p>
-          <div class="row"><label>Restore deep link after SSO re-login <span class="s-exp">experimental</span></label><input id="s-guard" type="checkbox" /></div>
-          <div class="row s-guard-dep" style="align-items:flex-start"><label>Known login / SSO hosts<div class="hint">one host per line; matched as a substring of the page's hostname</div></label><textarea id="s-authhosts"></textarea></div>
         </div>
         <div class="s-preview">
           <div class="s-preview-frame" id="s-preview-frame">
@@ -136,10 +131,11 @@
   </div>
 
   <div id="urlpop"></div>
-  <div id="toast"><span id="toast-msg"></span><button id="toast-undo">Undo</button></div>
+  <div id="toast"><span id="toast-msg"></span><button id="toast-undo">Undo</button><button id="toast-retry" hidden>Retry save</button></div>
   <div id="hint">drag felt = pan · wheel = zoom · click = select · double-click = open · ⌫ = delete · ⌘/ctrl-Z = undo</div>
 
   <script src="shared.js"></script>
+  <script src="storage.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

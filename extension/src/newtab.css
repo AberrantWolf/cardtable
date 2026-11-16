@@ -99,7 +99,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .card textarea.note::placeholder { color: #c2c2b6; }
 .card .status { position: absolute; top: 16px; right: 16px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .25); }   /* top-right: the favicon owns the top-left corner */
 .card .status.live { background: #57c777; }
-.card .status.sleeping { background: #c9c9c0; }
 .card .status.cold { background: transparent; border: 2px solid #b9b9ae; width: 8px; height: 8px; }
 .card .close {
   position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; border-radius: 50%;
@@ -142,15 +141,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .sticky.editing .sticky-del { display: flex; }
 
 /* ---- hand ---- */
-#hand { position: fixed; left: 50%; bottom: -22px; transform: translateX(-50%); height: 230px; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; z-index: 800; }
-/* fan rotation + hover lift are set inline from JS (renderHand) so they don't depend on CSS var support/caching */
-#hand .card { position: relative; width: 158px; margin: 0 -38px; transform-origin: bottom center; transition: transform .16s ease; pointer-events: auto; filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .45)); }
-#hand .card:hover { z-index: 50; }   /* lifted card sits above its neighbours; the rise itself is the inline transform */
-#hand .card .close, #hand .card .note, #hand .card .status { display: none !important; }
-#hand.receiving::before { content: ""; position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); width: 320px; height: 150px; border-radius: 20px; background: radial-gradient(closest-side, rgba(238, 242, 239, .16), transparent); border: 2px dashed rgba(238, 242, 239, .4); }
-/* ghost = the dragged card's predicted resting spot in the hand (mirrors the dashed group preview) */
-#hand .card.ghost { opacity: .5; pointer-events: none; filter: none; }
-#hand .card.ghost .shot { outline: 2px dashed rgba(238, 242, 239, .7); outline-offset: -3px; }
+#hand { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: min(calc(100vw - 200px), 900px); height: 280px; z-index: 800; outline: none; }
+.hand-scroll { position:absolute; inset:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.35) transparent; }
+.hand-track { height:100%; min-width:100%; pointer-events:none; }
+.hand-visuals { position:absolute; inset:0 0 20px; overflow:hidden; pointer-events:none; }
+.hand-surface { position:absolute; inset:0 0 20px; touch-action:none; cursor:grab; }
+#hand .card { position:absolute; bottom:0; width:158px; transform-origin:center bottom; pointer-events:none; margin:0; transition:transform .1s ease; }
+#hand .card.hand-focused { box-shadow:var(--lift-hi); }
+#hand:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; border-radius:14px; }
+#hand .card .close, #hand .card .note, #hand .card .status { display:none !important; }
+#hand.receiving::before { content:""; position:absolute; inset:60px 10px 22px; border:2px dashed rgba(238,242,239,.55); border-radius:18px; background:rgba(238,242,239,.08); pointer-events:none; }
+@media(max-width:600px){#hand{width:calc(100vw - 150px)!important;}}
 
 /* ---- chrome: toolbar / search ---- */
 #bar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 12px; background: rgba(0, 0, 0, .4); backdrop-filter: blur(8px); }
@@ -210,10 +211,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--title
 .panel .actions button { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; cursor: pointer; border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .1); color: #fff; }
 .panel .actions button.primary { background: var(--accent); border-color: var(--accent); }
 .panel .hint { font-size: 11.5px; color: rgba(255, 255, 255, .45); margin-top: 2px; }
-.panel .s-note { font-size: 11.5px; line-height: 1.5; color: rgba(255, 255, 255, .5); margin: 8px 0 2px; }
-.panel .s-note strong { color: rgba(255, 255, 255, .8); font-weight: 600; }
-.s-exp { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #e0b15a; border: 1px solid rgba(224, 177, 90, .5); border-radius: 5px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; white-space: nowrap; }
-.row.s-guard-dep.hide { display: none; }
 
 /* ---- empty state ---- */
 #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none; z-index: 400; }

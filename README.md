@@ -2,9 +2,8 @@
 
 A spatial canvas for your browser tabs. Each tab becomes a **Polaroid card** — a
 screenshot of the last time it was open — on a pannable, zoomable 2D table. Group cards
-into **hand-drawn chalk blobs**, annotate them, rename the groups, and let the tabs you
-aren't using **sleep** to save memory. New tabs arrive as **cards in your hand** along
-the bottom; drop them onto the table into a group, on their own, or into the bin.
+into **hand-drawn chalk blobs**, annotate them, and rename the groups.
+New tabs arrive as **cards in your hand** along the bottom; drop them onto the table into a group, on their own, or into the bin.
 
 Open the canvas from the toolbar button or `Alt+Shift+C`; a setting can also route every new tab there if you want the canvas-as-home workflow.
 
@@ -15,13 +14,9 @@ Open the canvas from the toolbar button or `Alt+Shift+C`; a setting can also rou
 ## ✨ Highlights
 
 - 🖼️ **Tabs as cards** — every tab is a screenshot card you can arrange spatially.
-- 😴 **Sleeping tabs** — only a few tabs stay live; the rest are discarded to ~no memory
-  but keep their scroll, form, and session state.
 - ✏️ **Chalk groups** — drop cards near each other to form hand-drawn outlines; rename
   them, and drag an outline to move the whole group.
 - 🗒️ **Notes & stickies** — annotate any card, or drop standalone sticky notes onto the table.
-- 🔐 **SSO deep-link guard** — when a re-login bounces you around, it lands you back on
-  the page you actually wanted.
 - 💾 **Local only** — everything lives in your browser; nothing leaves your machine.
 
 ## 🚀 Install
@@ -43,6 +38,36 @@ Open the canvas with the toolbar button or `Alt+Shift+C`. Re-run `./build.sh` an
 extension after edits. See [`extension/README.md`](extension/README.md) for build
 internals, debugging, and how to opt into routing every new tab to the canvas.
 
+## Development
+
+Use **Node.js 26 LTS** and npm. With [nvm](https://github.com/nvm-sh/nvm), run
+`nvm install` and `nvm use` from the repository root; `.nvmrc` selects the same
+Node major used in CI. Other Node installers work too, provided `node` and `npm`
+are on your shell's PATH (including the shell Codex uses).
+
+```sh
+npm ci
+npm test
+npm run lint
+```
+
+`npm ci` installs the locked development tools. `npm run lint` rebuilds both browser
+targets and runs Mozilla's extension validator on the Firefox output. Use
+`npm run build` for just the build. Generated files under `extension/dist/` are
+ignored; edit the source and rebuild before reloading the extension.
+
+`npm test` runs the storage, identity, concurrency and interaction regressions.
+For a real Chromium extension smoke test, run `npx playwright install chromium`
+then `npm run test:browser`; it uses a disposable profile. Firefox checks use
+`npx playwright install firefox` and `npm run test:firefox`. See
+[verification and performance checks](docs/testing.md) for coverage and the Firefox
+manual checklist. [AGENTS.md](AGENTS.md) describes architecture and review rules.
+
+The validator currently reports two compatibility warnings: the Firefox minimum
+version is 121, while the `data_collection_permissions` manifest key was introduced
+in desktop Firefox 140 and Android Firefox 142. Keep the declaration for AMO;
+changing supported browser versions is a separate compatibility decision.
+
 ## 🎮 Using it
 
 - 🖐️ **Drag the felt** to pan, **scroll wheel** to zoom, **F** to fit everything.
@@ -52,12 +77,13 @@ internals, debugging, and how to opt into routing every new tab to the canvas.
   well clear), so cards don't fall out of a group by accident. Drop next to a loose card
   to start a new group, or in open space to stand alone.
 - ✏️ **Drag a group's outline** to move the whole group together; nearby stickies come along without being included in the chalk outline.
+- 🃏 **The hand** scrolls horizontally; hover enlarges the aimed-at card and moves neighbors aside. Arrow keys navigate and Enter opens a focused hand card. Search includes the hand.
 - 👇 **Drag a card down into the hand** to pull it back for placing elsewhere.
-- 🆕 **Drag a hand card** (the bottom fan) onto the table to place it, or onto **🗑** to discard.
+- 🆕 **Drag a hand card** (the bottom strip) onto the table to place it, or onto **🗑** to discard.
 - 🗒️ **Click a card's bottom strip** to type a note. **Click a group name** to rename it. Drag from **+ note** / the sticky pile to add standalone notes.
-- 👆 **Double-click a card** to jump to that tab — it wakes, or is recreated if it was closed.
+- 👆 **Double-click a card** to jump to that tab — it activates, or is recreated if it was closed.
 
-The status dot on each card shows **live / sleeping / cold**.
+The status dot on each card shows **live / cold** (open / closed).
 
 ## ⌨️ Keyboard
 
@@ -74,12 +100,11 @@ The status dot on each card shows **live / sleeping / cold**.
 ## ⚙️ Settings (⚙ on the canvas)
 
 Theme (slate / paper) & felt color · card width · label font & size · sticky color / size / font · screenshot quality
-· *keep N tabs awake* · new-tabs-land-in-hand · hand-card close behavior · group-around-lone-cards · SSO deep-link
-guard + auth-host list · reduce motion · **Export / Import board** (replace or merge JSON).
+· new-tabs-land-in-hand · hand-card close behavior · group-around-lone-cards · reduce motion · **Export / Import board** (replace or merge JSON).
 
 Grouping feel is tuned by `ADD_PAD` / `REMOVE_PAD` (the join/leave hysteresis) and
 `NEW_GROUP_DIST` near the top of `extension/src/app.js`. State (cards, groups, notes,
-view, screenshots) persists locally in IndexedDB.
+view, screenshots) persists locally in IndexedDB. Site icons render only from local image bytes; unavailable icons use a letter placeholder.
 
 ## 🔒 Privacy
 
@@ -91,8 +116,8 @@ stored locally on your device.
 ## 🗺️ Status & roadmap
 
 This is the first pass of something I've been using daily and find genuinely useful —
-not yet formally released. Ideas for later (mostly as I want them myself): tiering /
-cold-archive for hundreds of tabs · rubber-band (marquee) multi-select · arrow-key
+with an automated release workflow. Ideas for later (mostly as I want them myself):
+rubber-band (marquee) multi-select · arrow-key
 navigation & fuller a11y · sync across devices · screenshots included in export.
 
 Suggestions welcome. 🙌

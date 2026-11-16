@@ -1,401 +1,262 @@
-// background.js — classic script. Runs as a Chromium MV3 service worker (via importScripts)
-// and as a Firefox MV3 event page (shared.js is listed before it in the manifest).
-if (typeof CT === "undefined") { try { importScripts("shared.js"); } catch (e) {} }
+// Classic background: Chromium MV3 worker / Firefox event page. No browser-side bundler.
+if (typeof CT === 'undefined') importScripts('shared.js');
+if (typeof CTStore === 'undefined') importScripts('storage.js', 'commands.js', 'board-format.js', 'board-undo.js', 'capture.js');
 const X = globalThis.browser || globalThis.chrome;
-
-// ---------------- IndexedDB (background owns: tabs, shots) ----------------
-let _db = null;
-function idbOpen() {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(CT.DB, CT.DBV);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(CT.STORES.tabs)) {
-        const s = db.createObjectStore(CT.STORES.tabs, { keyPath: "cardId" });
-        s.createIndex("tabId", "tabId", { unique: false });
-        s.createIndex("url", "url", { unique: false });
-      }
-      if (!db.objectStoreNames.contains(CT.STORES.shots)) db.createObjectStore(CT.STORES.shots, { keyPath: "cardId" });
-      if (!db.objectStoreNames.contains(CT.STORES.layout)) db.createObjectStore(CT.STORES.layout, { keyPath: "cardId" });
-      if (!db.objectStoreNames.contains(CT.STORES.groups)) db.createObjectStore(CT.STORES.groups, { keyPath: "id" });
-      if (!db.objectStoreNames.contains(CT.STORES.notes)) db.createObjectStore(CT.STORES.notes, { keyPath: "id" });
-    };
-    req.onsuccess = () => {
-      const conn = req.result;
-      // A suspended/torn-down event page can leave a stale or closed handle cached in `_db`; null it
-      // so the next call reopens instead of every transaction throwing silently until a restart.
-      conn.onclose = () => { if (_db === conn) _db = null; };
-      conn.onversionchange = () => { try { conn.close(); } catch (e) {} if (_db === conn) _db = null; };
-      res(conn);
-    };
-    req.onerror = () => rej(req.error);
-  });
-}
-async function db() { if (!_db) _db = await idbOpen(); return _db; }
-function pReq(req) { return new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); }); }
-async function st(store, mode) { return (await db()).transaction(store, mode).objectStore(store); }
-async function idbGet(store, key) { return pReq((await st(store, "readonly")).get(key)); }
-async function idbAll(store) { return pReq((await st(store, "readonly")).getAll()); }
-async function idbPut(store, val) { return pReq((await st(store, "readwrite")).put(val)); }
-async function idbDel(store, key) { return pReq((await st(store, "readwrite")).delete(key)); }
-async function cardByTab(tabId) { const r = await pReq((await st(CT.STORES.tabs, "readonly")).index("tabId").getAll(tabId)); return r[0] || null; }
-
-// ---------------- settings ----------------
-let settings = { ...CT.DEFAULTS };
+const idbGet = CTStore.get, idbAll = CTStore.all;
+const put = (store, value) => ({ type: 'put', store, value });
+const del = (store, key) => ({ type: 'delete', store, key });
+let settings = { ...CT.DEFAULTS }, bindings = {};
+const isCanvas = url => typeof url === 'string' && url.startsWith(X.runtime.getURL('newtab.html'));
+const tracked = tab => tab && CT.isTrackable(tab.url) && !isCanvas(tab.url);
+const report = e => console.error('[cardtable]', e);
+const queueEvent = fn => CTCommands.enqueue(fn).catch(report);
+CTCommands.subscribe(change => { X.runtime.sendMessage({ type: CT.MSG.CHANGED, change }).catch(() => {}); });
 async function loadSettings() {
-  try { const r = await X.storage.local.get("settings"); settings = { ...CT.DEFAULTS, ...(r.settings || {}) }; } catch (e) {}
+  const { settings: saved } = await X.storage.local.get('settings');
+  settings = CT.normalizeSettings(saved);
+  if (saved && Object.keys(saved).some(k => !Object.hasOwn(CT.DEFAULTS, k))) await X.storage.local.set({ settings });
 }
-X.storage.onChanged.addListener((ch, area) => {
-  if (area !== "local" || !ch.settings) return;
-  settings = { ...CT.DEFAULTS, ...(ch.settings.newValue || {}) };
-  applyCanvasPin();   // reflect a pinCanvasTab toggle onto the already-open canvas right away
-});
-
-// ---------------- helpers ----------------
-const isCanvas = (url) => !!url && url.startsWith(X.runtime.getURL(""));
-const broadcastChanged = () => { try { X.runtime.sendMessage({ type: CT.MSG.CHANGED }).catch(() => {}); } catch (e) {} };
-const broadcastShot = (cardId) => { try { X.runtime.sendMessage({ type: CT.MSG.SHOT, cardId }).catch(() => {}); } catch (e) {} };
-
-const creating = new Map();   // tabId -> in-flight create promise; collapses concurrent creates into one card
+async function saveBindings() { await X.storage.session.set({ bindings }); }
+async function cardByTab(id) {
+  const c = bindings[id] ? await idbGet('tabs', bindings[id]) : null;
+  return c?.tabId === id ? c : null;
+}
+function newCard(t) {
+  return { cardId: CT.uuid(), url: t.url, title: t.title || t.url, favicon: t.favIconUrl || '', tabId: t.id, windowId: t.windowId, state: 'live', createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0 };
+}
+function bind(c, t) {
+  if (c.tabId != null && c.tabId !== t.id && bindings[c.tabId] === c.cardId) delete bindings[c.tabId];
+  bindings[t.id] = c.cardId;
+  return { ...c, tabId: t.id, windowId: t.windowId, url: t.url, title: t.title || c.title, favicon: t.favIconUrl || c.favicon, state: 'live', lastSeen: Date.now() };
+}
+async function reconcile() {
+  const all=await X.tabs.query({}),cards=await idbAll('tabs'),old=bindings;
+  const byId=new Map(cards.map(c=>[c.cardId,c])),byUrl=new Map();
+  for(const c of cards){const key=CT.normUrl(c.url);if(!byUrl.has(key))byUrl.set(key,[]);byUrl.get(key).push(c);}
+  const pending=t=>byId.get(old[t.id])?.opening&&(!t.url||t.url==='about:blank');
+  const open=all.filter(t=>tracked(t)||pending(t));bindings={};
+  const used=new Set(),ops=[],reserved=new Set(open.map(t=>old[t.id]).filter(id=>byId.has(id)));
+  for(const t of open){
+    let c=byId.get(old[t.id]);if(c&&used.has(c.cardId))c=null;
+    if(!c)c=byUrl.get(CT.normUrl(t.url))?.find(c=>!used.has(c.cardId)&&!reserved.has(c.cardId));
+    const opening=!tracked(t);
+    c={...bind(c||newCard(t),opening?{...t,url:c.url}:t),opening};used.add(c.cardId);ops.push(put('tabs',c));
+  }
+  for(const c of cards)if(!used.has(c.cardId)&&(c.tabId!=null||c.state!=='cold'))ops.push(put('tabs',{...c,tabId:null,state:'cold'}));
+  await CTCommands.commit(ops);await saveBindings();
+}
 async function ensureCardForTab(tab) {
-  if (!tab || !CT.isTrackable(tab.url) || isCanvas(tab.url)) return null;
-  const existing = await cardByTab(tab.id);
-  if (existing) return existing;
-  if (creating.has(tab.id)) return creating.get(tab.id);
-  const p = (async () => {
-    const card = {
-      cardId: CT.uuid(), tabId: tab.id, url: tab.url, title: tab.title || tab.url,
-      favicon: tab.favIconUrl || "", state: tab.discarded ? "sleeping" : "live",
-      windowId: tab.windowId, createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0,
-    };
-    await idbPut(CT.STORES.tabs, card);
-    broadcastChanged();
-    return card;
-  })();
-  creating.set(tab.id, p);
-  try { return await p; } finally { creating.delete(tab.id); }
+  // Resolve a fresh browser tab; delayed events must not recreate a tab that has closed.
+  try { tab = await X.tabs.get(tab.id); } catch { return null; }
+  if (!tracked(tab)) return null;
+  let c = await cardByTab(tab.id);
+  if (c) return c;
+  c = bind(newCard(tab), tab);
+  await CTCommands.commit([put('tabs', c)]); await saveBindings(); return c;
 }
-
-// ---------------- screenshots ----------------
-const lastCap = new Map();
-const MIN_CAP_MS = 1500;
-// Capture/store failures were historically swallowed silently, which hid a total screenshot
-// blackout (empty `shots` store) until a browser restart. Log each distinct failure once: the
-// common "tab not visible/focused" cases collapse to a single line, while a real problem —
-// missing host permission, a wedged OffscreenCanvas, a stuck IndexedDB handle — shows its message.
-const loggedCapErrs = new Set();
-function logCapErr(stage, tab, e) {
-  const msg = (e && e.message) || String(e);
-  const key = stage + "|" + msg;
-  if (loggedCapErrs.has(key)) return;
-  loggedCapErrs.add(key);
-  console.warn(`[cardtable] screenshot ${stage} failed:`, msg, "—", tab && tab.url);
-}
-async function downscale(dataUrl, maxW, quality) {
-  const blob = await (await fetch(dataUrl)).blob();
-  const bmp = await createImageBitmap(blob);
-  const scale = Math.min(1, maxW / bmp.width);
-  const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
-  const oc = new OffscreenCanvas(w, h);
-  oc.getContext("2d").drawImage(bmp, 0, 0, w, h);
-  if (bmp.close) bmp.close();
-  return oc.convertToBlob({ type: "image/jpeg", quality });
-}
-async function captureTab(tab) {
-  if (!tab || !CT.isTrackable(tab.url) || isCanvas(tab.url)) return;
-  // captureVisibleTab shoots whatever is active in the window *right now*, but this capture was
-  // deferred ~400ms (and may be queued behind others), so you can switch tabs before it fires.
-  // Confirm the intended tab is still the window's active tab — before AND after the shot — else
-  // we'd store, say, tab B's image on tab A's card. Re-resolve to the fresh tab object too.
-  const stillActive = async () => {
-    try { const a = (await X.tabs.query({ active: true, windowId: tab.windowId }))[0]; return a && a.id === tab.id ? a : null; }
-    catch (e) { return null; }
-  };
-  const live = await stillActive();
-  if (!live || !CT.isTrackable(live.url) || isCanvas(live.url)) return;   // switched away during the debounce
-  tab = live;
-  const now = Date.now();
-  if (now - (lastCap.get(tab.id) || 0) < MIN_CAP_MS) return;
-  lastCap.set(tab.id, now);
-  // Firefox MV3 treats manifest host_permissions as optional, so on a fresh install <all_urls> is
-  // ungranted and captureVisibleTab is simply absent (calling it throws "not a function"). Detect
-  // that distinctly so the log is actionable; the canvas surfaces an "Enable screenshots" prompt.
-  if (typeof X.tabs.captureVisibleTab !== "function") {
-    logCapErr("capture", tab, new Error("no page access — enable screenshots in cardtable Settings (Firefox grants site access on request, not at install)"));
+async function updateTab(tab,info={}) {
+  try { tab = await X.tabs.get(tab.id); } catch { return; }
+  if (!tracked(tab)) {
+    const c=await cardByTab(tab.id);
+    // Firefox initially exposes a newly created navigation as about:blank.
+    if(c?.opening&&(!tab.url||tab.url==='about:blank')&&info.url!=='about:blank')return;
+    if(c){delete bindings[tab.id];capture.cancel(tab.id);await CTCommands.commit([put('tabs',{...c,tabId:null,state:'cold'})]);await saveBindings();}
     return;
   }
-  let dataUrl;
-  try { dataUrl = await X.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: Math.round((settings.shotQuality || 0.7) * 100) }); }
-  catch (e) { logCapErr("capture", tab, e); return; }   // often benign (tab not visible/focused); a permission error surfaces here too
-  if (!(await stillActive())) return;   // a switch raced the capture itself — drop the (possibly wrong) image
-  try {
-    const blob = await downscale(dataUrl, settings.shotMaxWidth || 480, settings.shotQuality || 0.7);
-    const card = await ensureCardForTab(tab);
-    if (!card) return;
-    await idbPut(CT.STORES.shots, { cardId: card.cardId, blob, ts: now });
-    card.title = tab.title || card.title; card.favicon = tab.favIconUrl || card.favicon;
-    card.url = tab.url; card.state = "live"; card.lastSeen = now;
-    await idbPut(CT.STORES.tabs, card);
-    broadcastShot(card.cardId);
-  } catch (e) { logCapErr("store", tab, e); }
+  const c = await ensureCardForTab(tab); if (!c) return;
+  const next = {...bind(c, tab),opening:false};
+  next.generation = (c.generation || 0) + (c.url !== tab.url ? 1 : 0);
+  if (c.url !== next.url || c.title !== next.title || c.favicon !== next.favicon || c.state !== next.state || c.opening) await CTCommands.commit([put('tabs', next)]);
 }
-const scheduleCapture = (tab) => setTimeout(() => captureTab(tab), 400);
-
-// ---------------- sleep policy (one knob; tiering hooks in here later) ----------------
-let sleepT = null;
-const debouncedSleep = () => { clearTimeout(sleepT); sleepT = setTimeout(applySleepPolicy, 1500); };
-async function applySleepPolicy() {
-  try {
-    const tabs = (await X.tabs.query({})).filter((t) => CT.isTrackable(t.url) && !isCanvas(t.url) && !t.discarded);
-    tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
-    const maxLive = Math.max(1, settings.maxLiveTabs || 1);
-    let changed = false;
-    for (const t of tabs.slice(maxLive)) {
-      if (t.active) continue;
-      try {
-        await X.tabs.discard(t.id);
-        const c = await cardByTab(t.id);
-        if (c && c.state !== "sleeping") { c.state = "sleeping"; await idbPut(CT.STORES.tabs, c); changed = true; }
-      } catch (e) {}
-      // TIERING HOOK: when scaling past dozens, oldest tabs could be fully closed
-      // (tabs.remove) here and marked 'cold' instead of merely discarded.
-    }
-    if (changed) broadcastChanged();
-  } catch (e) {}
+async function cacheFavicon(cardId,source){
+  const data=CT.localFavicon(source);if(!data)return;
+  const [header,encoded]=data.split(','),mime=header.slice(5,header.indexOf(';'));
+  const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+  const shot=await idbGet('shots',cardId);
+  await CTCommands.commit([put('shots',{...shot,cardId,faviconBlob:new Blob([bytes],{type:mime})})]);
 }
-
-// ---------------- transient state, session-backed (survives SW suspension) ----------------
-// MV3 service workers are killed when idle; in-memory Maps would drop the SSO guard mid-redirect
-// and the one-shot scroll restore. storage.session is in-memory, per-session, cleared on browser close.
-const SES = X.storage.session;
-const gkey = (id) => "guard:" + id, rkey = (id) => "restore:" + id;
-async function getGuard(id) { try { const r = await SES.get(gkey(id)); return r[gkey(id)] || null; } catch (e) { return null; } }
-async function setGuard(id, g) { try { await SES.set({ [gkey(id)]: g }); } catch (e) {} }
-async function delGuard(id) { try { await SES.remove(gkey(id)); } catch (e) {} }
-async function setRestore(id, y) { try { await SES.set({ [rkey(id)]: y }); } catch (e) {} }
-async function delRestore(id) { try { await SES.remove(rkey(id)); } catch (e) {} }
-async function getRestore(id) { try { const r = await SES.get(rkey(id)); return r[rkey(id)] || 0; } catch (e) { return 0; } }
-
-// ---------------- SSO deep-link guard ----------------
-async function armGuard(tabId, url) { if (settings.deepLinkGuard) await setGuard(tabId, { expectedUrl: url, sawAuth: false, ts: Date.now() }); }
-X.webNavigation.onCommitted.addListener(async (d) => {
-  if (d.frameId !== 0) return;
-  const g = await getGuard(d.tabId); if (!g) return;
-  try { if (CT.isAuthHost(new URL(d.url).hostname, settings.authHosts)) { g.sawAuth = true; await setGuard(d.tabId, g); } } catch (e) {}
-});
-X.webNavigation.onCompleted.addListener(async (d) => {
-  if (d.frameId !== 0) return;
-  const g = await getGuard(d.tabId); if (!g) return;
-  if (Date.now() - g.ts > 90000) { await delGuard(d.tabId); return; }
-  if (!g.sawAuth) return;                                   // only act after an actual auth bounce
-  if (CT.normUrl(d.url) === CT.normUrl(g.expectedUrl)) { await delGuard(d.tabId); return; }
-  if (!CT.sameOrigin(d.url, g.expectedUrl)) return;         // landed on a different site on purpose → leave it
-  await delGuard(d.tabId);
-  try { await X.tabs.update(d.tabId, { url: g.expectedUrl }); } catch (e) {}
-});
-
-// ---------------- commands ----------------
-async function openCard(cardId) {
-  const card = await idbGet(CT.STORES.tabs, cardId);
-  if (!card) return;
-  if (card.tabId != null) {
-    try {
-      const tab = await X.tabs.get(card.tabId);
-      await armGuard(card.tabId, card.url);                 // activating a sleeping tab reloads it → guard catches re-auth
-      await X.tabs.update(card.tabId, { active: true });
-      await X.windows.update(tab.windowId, { focused: true });
-      card.state = "live"; card.lastSeen = Date.now(); await idbPut(CT.STORES.tabs, card);
-      broadcastChanged(); debouncedSleep(); return;
-    } catch (e) { /* tab is gone → fall through to cold reopen */ }
+const rkey = id => 'restore:' + id;
+async function openCard({ cardId, destination = 'current' }) {
+  let c = await idbGet('tabs', cardId); if (!c) throw new Error('Card no longer exists');
+  let tab = null, created = false;
+  if (c.tabId != null && bindings[c.tabId] === c.cardId) {
+    try { tab = await X.tabs.get(c.tabId);if(!tracked(tab)&&!(c.opening&&tab.status==='loading'))tab=null; } catch { /* cold reopen */ }
   }
-  const tab = await X.tabs.create({ url: card.url, active: true });
-  await armGuard(tab.id, card.url);
-  await setRestore(tab.id, card.scrollY || 0);       // restore scroll once, only on this cold reopen
-  card.tabId = tab.id; card.state = "live"; card.windowId = tab.windowId; card.lastSeen = Date.now();
-  await idbPut(CT.STORES.tabs, card);
-  broadcastChanged(); debouncedSleep();
-}
-const deleting = new Set();
-async function deleteCard(cardId) {
-  const card = await idbGet(CT.STORES.tabs, cardId);
-  if (card && card.tabId != null) { deleting.add(card.tabId); try { await X.tabs.remove(card.tabId); } catch (e) {} }
-  await deleteCardRecords(cardId);
-  broadcastChanged();
+  if (tab) {
+    if (destination === 'newWindow') {
+      const win = await X.windows.create({ tabId: tab.id }); tab = { ...tab, windowId: win.id };
+    } else {
+      await X.tabs.update(tab.id, { active: true });
+      await X.windows.update(tab.windowId, { focused: true });
+    }
+  } else {
+    created = true;
+    if (destination === 'newWindow') {
+      const win = await X.windows.create({ url: c.url, focused: true });
+      tab = win.tabs?.[0] || (await X.tabs.query({ windowId: win.id }))[0];
+    } else tab = await X.tabs.create({ url: c.url, active: true });
+    if (!tab) throw new Error('Browser did not create a tab');
+  }
+  const before = { ...bindings }, next = {...bind(c,tracked(tab)?tab:{...tab,url:c.url}),opening:!tracked(tab)};
+  try { await CTCommands.commit([put('tabs', next)]); }
+  catch (e) {
+    bindings = before;
+    if (created) { try { await X.tabs.remove(tab.id); } catch (cleanup) { report(cleanup); } }
+    throw e;
+  }
+  try {
+    await saveBindings();
+    if (created) await X.storage.session.set({ [rkey(tab.id)]: c.scrollY || 0 });
+  } catch (e) { report(e); } // successful binding remains authoritative if optional session saving fails
+  return { cardId, tabId: tab.id };
 }
 async function deleteCardRecords(cardId) {
-  await idbDel(CT.STORES.tabs, cardId);
-  await idbDel(CT.STORES.shots, cardId);
-  await idbDel(CT.STORES.layout, cardId);
+  await CTCommands.commit([del('tabs', cardId), del('shots', cardId), del('layout', cardId)]);
 }
-async function cardIsInHand(cardId) {
-  const layout = await idbGet(CT.STORES.layout, cardId).catch(() => null);
-  return !layout || layout.placed !== true;
+async function deleteCard(cardId) {
+  const c = await idbGet('tabs', cardId);
+  if (c?.tabId != null && bindings[c.tabId] === cardId) {
+    try { await X.tabs.remove(c.tabId); } catch (e) {
+      try { await X.tabs.get(c.tabId); throw e; } catch (gone) { if (gone === e) throw e; }
+    }
+    delete bindings[c.tabId];
+  }
+  await deleteCardRecords(cardId); await saveBindings();
 }
 async function focusCanvas() {
-  const url = X.runtime.getURL("newtab.html");
-  const all = await X.tabs.query({});
-  const existing = all.find((t) => isCanvas(t.url));
+  const existing = (await X.tabs.query({})).find(t => isCanvas(t.url));
   if (existing) {
-    await X.tabs.update(existing.id, { active: true });
-    try { const t = await X.tabs.get(existing.id); await X.windows.update(t.windowId, { focused: true }); } catch (e) {}
-  } else {
-    await X.tabs.create({ url, pinned: settings.pinCanvasTab !== false });
-  }
-  debouncedSleep();
+    await X.tabs.update(existing.id, { active: true }); await X.windows.update(existing.windowId, { focused: true });
+  } else await X.tabs.create({ url: X.runtime.getURL('newtab.html'), pinned: settings.pinCanvasTab !== false });
 }
-// Pin/unpin any open canvas tab to match the current setting (no-op if already correct).
 async function applyCanvasPin() {
-  const want = settings.pinCanvasTab !== false;
-  try { for (const t of await X.tabs.query({})) if (isCanvas(t.url) && t.pinned !== want) await X.tabs.update(t.id, { pinned: want }); } catch (e) {}
+  for (const t of await X.tabs.query({})) if (isCanvas(t.url) && t.pinned !== settings.pinCanvasTab) await X.tabs.update(t.id, { pinned: settings.pinCanvasTab !== false });
 }
-
-// New-tab takeover (opt-in via settings.newTabOpensCanvas). When enabled, a fresh browser
-// new tab routes to the single pinned canvas instead of staying blank. Off by default — the
-// toolbar button / Alt+Shift+C are the normal entry points and the canvas stays a singleton.
-const NEWTAB_URLS = ["chrome://newtab/", "chrome://new-tab-page/", "edge://newtab/", "brave://newtab/", "about:newtab", "about:home"];
-const isNativeNewTab = (tab) => { const u = tab.pendingUrl || tab.url || ""; return NEWTAB_URLS.includes(u); };
+const NEWTAB_URLS = ['chrome://newtab/', 'chrome://new-tab-page/', 'edge://newtab/', 'brave://newtab/', 'about:newtab', 'about:home'];
 async function routeNewTabToCanvas(tab) {
-  const url = X.runtime.getURL("newtab.html");
   const all = await X.tabs.query({});
-  const existing = all.find((t) => isCanvas(t.url) && t.id !== tab.id);
-  const winCount = all.filter((t) => t.windowId === tab.windowId).length;
-  if (existing && winCount > 1) {   // a canvas already exists and closing the blank tab won't empty its window
-    try { await X.tabs.update(existing.id, { active: true }); } catch (e) {}
-    try { await X.windows.update(existing.windowId, { focused: true }); } catch (e) {}
-    try { await X.tabs.remove(tab.id); } catch (e) {}
-  } else {                          // no canvas yet (or this is the window's only tab) — make this tab the singleton
-    try { await X.tabs.update(tab.id, { url, pinned: settings.pinCanvasTab !== false }); } catch (e) {}
-  }
+  const existing = all.find(t => isCanvas(t.url) && t.id !== tab.id);
+  if (existing && all.filter(t => t.windowId === tab.windowId).length > 1) {
+    await focusCanvas(); await X.tabs.remove(tab.id);
+  } else await X.tabs.update(tab.id, { url: X.runtime.getURL('newtab.html'), pinned: settings.pinCanvasTab !== false });
 }
-
-// ---------------- tab events ----------------
-X.tabs.onCreated.addListener((tab) => { if (CT.isTrackable(tab.url) && !isCanvas(tab.url)) ensureCardForTab(tab); });
-X.tabs.onCreated.addListener((tab) => { if (settings.newTabOpensCanvas && tab.active && isNativeNewTab(tab)) routeNewTabToCanvas(tab); });
-X.tabs.onUpdated.addListener(async (tabId, info, tab) => {
-  if (isCanvas(tab.url) || !CT.isTrackable(tab.url)) return;
-  if (!(info.url || info.title || info.favIconUrl || info.status === "complete")) return;
-  const card = await ensureCardForTab(tab);
-  if (card) {
-    let ch = false;
-    if (tab.url && tab.url !== card.url) { card.url = tab.url; ch = true; }
-    if (tab.title && tab.title !== card.title) { card.title = tab.title; ch = true; }
-    if (tab.favIconUrl && tab.favIconUrl !== card.favicon) { card.favicon = tab.favIconUrl; ch = true; }
-    if (info.status === "complete") { card.state = tab.discarded ? "sleeping" : "live"; ch = true; }
-    if (ch) { card.lastSeen = Date.now(); await idbPut(CT.STORES.tabs, card); broadcastChanged(); }
-  }
-  if (info.status === "complete" && tab.active) scheduleCapture(tab);
+// Encoding does not hold the command queue. Only prepare/commit touch board state.
+let captureEpoch=0;
+const capture=CTCapture.create({browser:X,settings:()=>settings,report,
+  prepare:tab=>CTCommands.enqueue(async()=>{
+    const c=await cardByTab(tab.id);return c&&c.url===tab.url?{cardId:c.cardId,tabId:tab.id,url:c.url,generation:c.generation||0,epoch:captureEpoch}:null;
+  }),
+  commit:(token,blob)=>CTCommands.enqueue(async()=>{
+    const c=await idbGet('tabs',token.cardId);
+    if(!c||token.epoch!==captureEpoch||c.tabId!==token.tabId||c.url!==token.url||(c.generation||0)!==token.generation||bindings[c.tabId]!==c.cardId)return;
+    const previous=await idbGet('shots',c.cardId);
+    await CTCommands.commit([put('shots',{...previous,cardId:c.cardId,blob,ts:Date.now()})]);
+  })
 });
-X.tabs.onActivated.addListener(async ({ tabId }) => {
-  try { const tab = await X.tabs.get(tabId); if (!isCanvas(tab.url)) scheduleCapture(tab); } catch (e) {}
-  debouncedSleep();
+const scheduleCapture=tab=>capture.request(tab);
+const captureTab=tab=>capture.capture(tab);
+// Initialization occupies the queue before any event or page command can run.
+const ready = CTCommands.enqueue(async () => {
+  await loadSettings(); bindings = (await X.storage.session.get('bindings')).bindings || {};
+  await reconcile();
 });
-X.tabs.onRemoved.addListener(async (tabId) => {
-  delGuard(tabId); delRestore(tabId);                       // drop any session-backed state for this tab
-  if (deleting.has(tabId)) { deleting.delete(tabId); return; }
-  const card = await cardByTab(tabId);
-  if (!card) return;
-  if (!settings.keepHandCardsOnTabClose && await cardIsInHand(card.cardId)) {
-    await deleteCardRecords(card.cardId);
-    broadcastChanged();
-    return;
-  }
-  card.state = "cold"; card.tabId = null; await idbPut(CT.STORES.tabs, card); broadcastChanged();
-});
-if (X.tabs.onReplaced) X.tabs.onReplaced.addListener(async (added, removed) => {
-  const card = await cardByTab(removed); if (card) { card.tabId = added; await idbPut(CT.STORES.tabs, card); }
-});
-if (X.windows && X.windows.onFocusChanged) X.windows.onFocusChanged.addListener(async (winId) => {
-  if (winId === X.windows.WINDOW_ID_NONE) return;
-  try { const [tab] = await X.tabs.query({ active: true, windowId: winId }); if (tab && !isCanvas(tab.url)) scheduleCapture(tab); } catch (e) {}
-});
-
-// ---------------- restart reconciliation (tab ids change; cards must survive) ----------------
-let reconciling = false;
-async function reconcile() {
-  if (reconciling) return;
-  reconciling = true;
+ready.catch(report);
+globalThis.CTBackground = { ready };
+async function editBoard(input) {
+  if(input.epoch!==undefined&&input.epoch!==((await idbGet('meta','boardEpoch'))?.value||0))throw new Error('Board was replaced; this edit is no longer valid');
+  const operations=[...(input.operations||[])];
+  // Only explicit deletion commands may touch tab identities or screenshot blobs.
+  if(operations.some(o=>!['layout','groups','notes'].includes(o.store)||!['put','delete'].includes(o.type)))throw new Error('Invalid canvas edit');
   try {
-    await loadSettings();
-    const openTabs = (await X.tabs.query({})).filter((t) => CT.isTrackable(t.url) && !isCanvas(t.url));
-    const cards = await idbAll(CT.STORES.tabs);
-    const byUrl = new Map();
-    for (const c of cards) {
-      const k = CT.normUrl(c.url);
-      if (!byUrl.has(k)) byUrl.set(k, []);
-      byUrl.get(k).push(c);
-    }
-    const matched = new Set();
-    for (const t of openTabs) {
-      let card = await cardByTab(t.id);
-      if (card && matched.has(card.cardId)) card = null;
-      if (!card) {
-        const bucket = byUrl.get(CT.normUrl(t.url)) || [];
-        card = bucket.find((cand) => !matched.has(cand.cardId)) || null;
-      }
-      if (!card) {
-        card = { cardId: CT.uuid(), url: t.url, title: t.title || t.url, favicon: t.favIconUrl || "", tabId: t.id, state: t.discarded ? "sleeping" : "live", windowId: t.windowId, createdAt: Date.now(), lastSeen: Date.now(), scrollY: 0 };
-      } else {
-        card.tabId = t.id; card.state = t.discarded ? "sleeping" : "live"; card.windowId = t.windowId; card.lastSeen = Date.now();
-        if (t.title) card.title = t.title; if (t.favIconUrl) card.favicon = t.favIconUrl;
-      }
-      matched.add(card.cardId);
-      await idbPut(CT.STORES.tabs, card);
-    }
-    for (const c of cards) {
-      if (!matched.has(c.cardId) && (c.tabId != null || c.state !== "cold")) {
-        c.tabId = null; c.state = "cold"; await idbPut(CT.STORES.tabs, c);
-      }
-    }
-    broadcastChanged();
-  } catch (e) {} finally { reconciling = false; }
+  for(const id of input.deleteCards||[]){
+    const c=await idbGet('tabs',id);if(!c)continue;
+    if(c.tabId!=null&&bindings[c.tabId]===id){await X.tabs.remove(c.tabId);delete bindings[c.tabId];capture.cancel(c.tabId);}
+    for(const store of ['tabs','shots','layout'])if(!operations.some(o=>o.store===store&&(o.key??o.value?.cardId)===id))operations.push(del(store,id));
+  }
+  return await CTUndo.edit({...input,operations});
+  }
+  catch(e){await reconcile();throw e;}
+  finally{await saveBindings();}
 }
-X.runtime.onInstalled.addListener(reconcile);
-if (X.runtime.onStartup) X.runtime.onStartup.addListener(reconcile);
-reconcile();
-
-// ---------------- message API ----------------
-X.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  (async () => {
-    try {
-      switch (msg && msg.type) {
-        case CT.MSG.GET_ALL: sendResponse({ tabs: await idbAll(CT.STORES.tabs) }); break;
-        case CT.MSG.GET_SHOT: { const s = await idbGet(CT.STORES.shots, msg.cardId); sendResponse({ blob: s ? s.blob : null }); break; }
-        case CT.MSG.OPEN: await openCard(msg.cardId); sendResponse({ ok: true }); break;
-        case CT.MSG.DELETE: await deleteCard(msg.cardId); sendResponse({ ok: true }); break;
-        case CT.MSG.CREATE_TAB: { const tab = await X.tabs.create({ url: msg.url, active: !!msg.active }); sendResponse({ tabId: tab.id }); break; }
-        case CT.MSG.FOCUS_CANVAS: await focusCanvas(); sendResponse({ ok: true }); break;
-        case CT.MSG.SETTINGS_CHANGED: await loadSettings(); sendResponse({ ok: true }); break;
-        case CT.MSG.CAPTURE: if (sender.tab) await captureTab(sender.tab); sendResponse({ ok: true }); break;
-        case CT.MSG.META: {
-          if (sender.tab) {
-            const card = await ensureCardForTab(sender.tab);
-            if (card) {
-              let ch = false;
-              if (msg.title && msg.title !== card.title) { card.title = msg.title; ch = true; }
-              if (msg.favicon && msg.favicon !== card.favicon) { card.favicon = msg.favicon; ch = true; }
-              if (msg.url && msg.url !== card.url) { card.url = msg.url; ch = true; }
-              if (ch) { await idbPut(CT.STORES.tabs, card); broadcastChanged(); }
-            }
-          }
-          sendResponse({ ok: true }); break;
-        }
-        case CT.MSG.SCROLL: { if (sender.tab) { const c = await cardByTab(sender.tab.id); if (c) { c.scrollY = msg.y; await idbPut(CT.STORES.tabs, c); } } sendResponse({ ok: true }); break; }
-        case CT.MSG.GET_SCROLL: { let y = 0; if (sender.tab) { y = await getRestore(sender.tab.id); await delRestore(sender.tab.id); } sendResponse({ y }); break; }
-        default: sendResponse({});
-      }
-    } catch (e) { sendResponse({ error: String(e) }); }
-  })();
-  return true; // keep the channel open for async sendResponse
+CTCommands.register('editBoard',editBoard);
+CTCommands.register('undo',({token})=>CTUndo.undo(token));
+CTCommands.register('openCard', openCard);
+CTCommands.register('deleteCard', ({ cardId }) => deleteCard(cardId));
+CTCommands.register('focusCanvas', focusCanvas);
+CTCommands.register('mutate', operations => CTCommands.commit(operations));
+X.tabs.onCreated.addListener(tab => queueEvent(async () => {
+  if (settings.newTabOpensCanvas && tab.active && NEWTAB_URLS.includes(tab.pendingUrl || tab.url)) return routeNewTabToCanvas(tab);
+  await ensureCardForTab(tab);
+}));
+X.tabs.onUpdated.addListener((id, info, tab) => {
+  queueEvent(() => updateTab(tab,info));
+  if (info.status === 'complete' && tab.active && tracked(tab)) scheduleCapture(tab);
 });
-if (X.commands) X.commands.onCommand.addListener((cmd) => { if (cmd === "focus-canvas") focusCanvas(); });
-if (X.action) X.action.onClicked.addListener(() => focusCanvas());
-// When the user grants <all_urls> at runtime (Firefox; see Settings → Screenshots), captureVisibleTab
-// becomes callable. Shoot each window's active tab right away so thumbnails appear without first
-// having to switch tabs (onActivated/onUpdated would otherwise be the only triggers).
-if (X.permissions && X.permissions.onAdded) {
-  X.permissions.onAdded.addListener(async (perms) => {
-    if (!perms || !(perms.origins || []).length) return;
-    try { for (const t of await X.tabs.query({ active: true })) if (t && !isCanvas(t.url)) scheduleCapture(t); }
-    catch (e) {}
-  });
-}
+X.tabs.onActivated.addListener(({ tabId }) => { X.tabs.get(tabId).then(scheduleCapture).catch(() => {}); });
+X.tabs.onRemoved.addListener(id => queueEvent(async () => {
+  capture.cancel(id);
+  await X.storage.session.remove(rkey(id));
+  const c = await cardByTab(id); delete bindings[id];
+  if (c) {
+    const layout = await idbGet('layout', c.cardId);
+    if (!settings.keepHandCardsOnTabClose && layout?.placed !== true) await deleteCardRecords(c.cardId);
+    else await CTCommands.commit([put('tabs', { ...c, tabId: null, state: 'cold' })]);
+  }
+  await saveBindings();
+}));
+X.tabs.onReplaced?.addListener((added, removed) => queueEvent(async () => {
+  const c = await cardByTab(removed); delete bindings[removed];
+  if (c) { const t = await X.tabs.get(added); await CTCommands.commit([put('tabs', bind(c, t))]); await saveBindings(); }
+}));
+X.windows.onFocusChanged?.addListener(id => {
+  if (id !== X.windows.WINDOW_ID_NONE) X.tabs.query({ active: true, windowId: id }).then(t => t[0] && scheduleCapture(t[0])).catch(report);
+});
+X.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings) queueEvent(async () => { await loadSettings(); await applyCanvasPin(); });
+});
+X.runtime.onStartup?.addListener(() => queueEvent(reconcile));
+X.runtime.onInstalled.addListener(() => queueEvent(reconcile));
+X.commands?.onCommand.addListener(cmd => { if (cmd === 'focus-canvas') queueEvent(focusCanvas); });
+X.action?.onClicked.addListener(() => queueEvent(focusCanvas));
+X.permissions?.onAdded.addListener(() => { X.tabs.query({ active: true }).then(tabs => tabs.forEach(scheduleCapture)).catch(report); });
+X.runtime.onMessage.addListener((msg, sender, respond) => {
+  if (!msg || msg.type === CT.MSG.CHANGED) return false;
+  const page = isCanvas(sender.url || sender.tab?.url);
+  const contentTypes = [CT.MSG.META, CT.MSG.CAPTURE, CT.MSG.SCROLL, CT.MSG.GET_SCROLL];
+  if (!page && !contentTypes.includes(msg.type)) { respond({ ok: false, error: { code: 'FORBIDDEN', message: 'Canvas command only' } }); return false; }
+  const run = async () => {
+    switch (msg.type) {
+      case CT.MSG.COMMAND: {
+        if (!['importBoard','exportBoard','editBoard','undo'].includes(msg.name)) throw new Error('Unknown board command');
+        if (msg.name === 'importBoard') captureEpoch++;
+        const value = await CTCommands.invoke(msg.name, msg.input);
+        if (msg.name === 'importBoard') { if (msg.input.mode === 'replace') bindings = {}; await reconcile(); }
+        return value;
+      }
+      case CT.MSG.OPEN: return openCard({ cardId: msg.cardId, destination: msg.destination });
+      case CT.MSG.DELETE: return deleteCard(msg.cardId);
+      case CT.MSG.MUTATE: {
+        if(msg.epoch!==undefined&&msg.epoch!==((await idbGet('meta','boardEpoch'))?.value||0))throw new Error('Board was replaced; reload before saving');
+        if(!Array.isArray(msg.operations)||msg.operations.some(o=>!['layout','groups','notes'].includes(o.store)||!['put','patch','delete'].includes(o.type)))throw new Error('Invalid canvas mutation');
+        return CTCommands.commit(msg.operations);
+      }
+      case CT.MSG.FOCUS_CANVAS: return focusCanvas();
+      case CT.MSG.GET_ALL: return { tabs: await idbAll('tabs') };
+      case CT.MSG.META: if (sender.tab) { await updateTab(sender.tab);const c=await cardByTab(sender.tab.id);if(c)await cacheFavicon(c.cardId,msg.favicon); } break;
+      case CT.MSG.SCROLL: {
+        const c = sender.tab && await cardByTab(sender.tab.id);
+        if (c && Number.isFinite(msg.y)) await CTCommands.commit([put('tabs', { ...c, scrollY: Math.max(0, msg.y) })]); break;
+      }
+      case CT.MSG.GET_SCROLL: {
+        if (!sender.tab) return { y: 0 };
+        const key = rkey(sender.tab.id), r = await X.storage.session.get(key);
+        await X.storage.session.remove(key); return { y: r[key] || 0 };
+      }
+      default: throw new Error('Unknown message');
+    }
+  };
+  // Image encoding never holds the mutation queue. Its commit will be serialized separately.
+  const promise = msg.type === CT.MSG.CAPTURE ? (sender.tab ? captureTab(sender.tab) : Promise.resolve()) : CTCommands.enqueue(run);
+  promise.then(value => respond({ ok: true, ...(value || {}) }), e => respond({ ok: false, error: { code: 'COMMAND_FAILED', message: e.message || String(e) } }));
+  return true;
+});

@@ -7,7 +7,7 @@
 
   const favicon = () => {
     const link = document.querySelector("link[rel~='icon'], link[rel='shortcut icon']");
-    return link ? link.href : location.origin + "/favicon.ico";
+    return CT.localFavicon(link?.href);
   };
   const sendMeta = () => send({ type: CT.MSG.META, url: location.href, title: document.title, favicon: favicon() });
 
@@ -46,7 +46,7 @@
       mo.observe(document.head, { subtree: true, childList: true, attributes: true, attributeFilter: ["href", "rel"] });
     }
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") setTimeout(pingCapture, 400); });
-    setInterval(pingCapture, 6000);
+    setInterval(pingCapture, 60000);
   }
   if (document.readyState === "complete" || document.readyState === "interactive") start();
   else window.addEventListener("DOMContentLoaded", start);

@@ -26,15 +26,19 @@ transparency, it includes:
 
 - **Tab information** — the URL, title, and favicon of tabs you have open or have placed
   on the canvas.
+- **Site icons** — only locally available raster image bytes are displayed. The canvas
+  never requests remote favicon URLs; unavailable icons use a letter placeholder.
 - **Page screenshots** — a low-resolution image of a page, captured while that page is
   visible, used as the card's thumbnail. These can show whatever was on screen, including
   content from pages you are logged in to.
 - **Your arrangement** — card positions, groups, group names, and any notes you write on
   cards.
-- **Settings** — your preferences (theme, card size, sleep policy, the list of SSO/auth
-  host patterns you configure, and so on).
-- **Transient session state** — short-lived state (the SSO deep-link target and a
-  one-time scroll position) kept only in `storage.session`, which the browser holds in
+- **Settings** — your preferences (theme, card size, fonts, and so on).
+- **Undo history** — recent affected records and screenshot bytes are retained locally
+  to undo deletion and movement. The journal is bounded to 50 actions and 32 MiB;
+  newer actions evict old entries, and replacing a board clears the journal.
+- **Transient session state** — a one-time scroll position kept only in
+  `storage.session`, which the browser holds in
   memory and erases when you close it. This never includes authentication tokens or
   login URLs.
 
@@ -45,9 +49,8 @@ locally and is shared only if you choose to share it.
 
 | Permission | Why it is requested |
 |---|---|
-| `tabs` | To see your open tabs and represent them as cards, and to activate, reload, or sleep (discard) tabs on your behalf. |
+| `tabs` | To see your open tabs and represent them as cards, and to activate, open, or close tabs on your behalf. |
 | Access to all websites (`<all_urls>`) | To capture the screenshot thumbnail of a page and read its title, favicon, and scroll position. A card can be any site, so this cannot be narrowed in advance. All of it runs locally. |
-| `webNavigation` | For the optional SSO deep-link guard, which detects when a login redirect bounces you away from the page you opened so it can return you there. |
 | `storage`, `unlimitedStorage` | To save everything listed above in your browser's local storage. |
 
 cardtable does not inject ads, modify the pages you visit, or read page content beyond

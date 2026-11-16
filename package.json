@@ -3,11 +3,22 @@
   "private": true,
   "description": "Tooling for the cardtable browser extension. The extension version lives in extension/manifest.base.json.",
   "license": "MIT",
+  "engines": {
+    "node": ">=26 <27",
+    "npm": ">=11"
+  },
   "scripts": {
     "build": "bash extension/build.sh",
-    "lint": "npm run build && web-ext lint --source-dir=extension/dist/firefox"
+    "lint": "npm run build && web-ext lint --source-dir=extension/dist/firefox",
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "npm run build && node tests/browser-smoke.cjs",
+    "test:performance": "npm run build && node tests/browser-performance.cjs",
+    "test:firefox": "npm run build && node tests/firefox-smoke.cjs"
   },
   "devDependencies": {
-    "web-ext": "^8.3.0"
-  }
+    "fake-indexeddb": "^6.2.8",
+    "playwright": "^1.62.1",
+    "web-ext": "^10.8.0"
+  },
+  "type": "module"
 }

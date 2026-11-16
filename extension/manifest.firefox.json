@@ -1,5 +1,5 @@
 {
-  "background": { "scripts": ["shared.js", "background.js"] },
+  "background": { "scripts": ["shared.js", "storage.js", "commands.js", "board-format.js", "board-undo.js", "capture.js", "background.js"] },
   "browser_specific_settings": {
     "gecko": {
       "id": "cardtable@trashtools.net",

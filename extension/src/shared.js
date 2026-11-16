@@ -4,25 +4,22 @@
   if (g.CT) return;
   g.CT = {
     DB: "cardtable",
-    DBV: 1,
-    STORES: { tabs: "tabs", shots: "shots", layout: "layout", groups: "groups", notes: "notes" },
+    DBV: 2,
+    STORES: { tabs: "tabs", shots: "shots", layout: "layout", groups: "groups", notes: "notes", meta: "meta" },
 
     // message types (page/content -> background, and broadcasts)
     MSG: {
+      MUTATE: "mutate",
+      COMMAND: "command",
       OPEN: "open",            // open/activate a card's tab (double-click)
       DELETE: "delete",        // close tab + delete card ("close for good")
-      SEND_TO_HAND: "toHand",  // discard tab back into the hand
-      CREATE_TAB: "createTab", // open a brand-new tab at a url
       GET_ALL: "getAll",       // page boot: fetch tabs + shots refs
-      GET_SHOT: "getShot",
       CAPTURE: "capture",      // content -> bg: capture me (I'm visible)
       META: "meta",            // content -> bg: title/favicon/url update
       SCROLL: "scroll",        // content -> bg: save scroll position
       GET_SCROLL: "getScroll", // content -> bg: restore scroll (cold reopen)
       FOCUS_CANVAS: "focusCanvas",
-      SETTINGS_CHANGED: "settingsChanged",
       CHANGED: "changed",      // bg -> page: cards changed, re-read
-      SHOT: "shot",            // bg -> page: a screenshot updated {cardId}
     },
 
     DEFAULTS: {
@@ -44,38 +41,31 @@
       stickyFontSize: 18,
       shotQuality: 0.7,
       shotMaxWidth: 480,
-      captureIntervalMs: 6000,
-      maxLiveTabs: 1,                 // sleep policy knob; raise (or add tiering) later
       handOnNewTab: true,
       keepHandCardsOnTabClose: false, // off = closing an unplaced/hand tab removes its card instead of making it cold
       newTabOpensCanvas: false,       // opt-in: route the browser's new tab to the single canvas tab
       pinCanvasTab: true,             // pin the canvas tab (compact, leftmost, can't be closed by accident)
       soloGroups: false,
-      showFavicons: true,             // off = don't render (or fetch) per-card site favicons
+      showFavicons: true,             // off = hide locally cached site favicons
       reducedMotion: false,
-      deepLinkGuard: false,           // experimental SSO deep-link restore — opt-in (see Settings)
-      // substring/suffix matches against a navigation hostname; user-editable in Settings.
-      authHosts: [
-        "login.microsoftonline.com", "login.microsoft.com", "login.live.com",
-        "okta.com", "accounts.google.com",
-        "ping", "adfs", "sts.", "idp.", "sso.", "login.", "auth.", "saml",
-      ],
     },
 
-    // host classification helpers (pure)
-    isAuthHost: function (host, hosts) {
-      if (!host) return false;
-      host = host.toLowerCase();
-      return (hosts || g.CT.DEFAULTS.authHosts).some((p) => host.includes(p.toLowerCase()));
+    // Keep saved/imported preferences limited to supported settings.
+    normalizeSettings: function (saved = {}) {
+      return Object.fromEntries(Object.entries(g.CT.DEFAULTS).map(([key, value]) =>
+        [key, saved?.[key] ?? value]));
     },
+
+    localFavicon: function (url) {
+      return typeof url === 'string' && url.length <= 131072 && /^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/]+=*$/i.test(url) ? url : '';
+    },
+
+    // URL helpers (pure)
     isTrackable: function (url) {
       return typeof url === "string" && /^https?:\/\//i.test(url);
     },
-    sameOrigin: function (a, b) {
-      try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
-    },
     normUrl: function (u) {
-      try { const x = new URL(u); return (x.origin + x.pathname).replace(/\/$/, "") + x.search; } catch { return u; }
+      try { return new URL(u).href; } catch { return u; }
     },
     uuid: function () {
       if (g.crypto && g.crypto.randomUUID) return g.crypto.randomUUID();
